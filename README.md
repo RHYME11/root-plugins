@@ -8,8 +8,29 @@ common implementation separate from application-specific connectors.
 Install ROOT and the Groot Plugin API, then configure with their CMake package
 locations available in `CMAKE_PREFIX_PATH`:
 
+When Groot is in the adjacent `../groot` directory, its `make` target prepares
+the required SDK and root-plugins can be built with one command:
+
 ```bash
-cmake -S . -B build -DCMAKE_PREFIX_PATH="/path/to/groot-plugin-sdk"
+make
+```
+
+This normal build creates only plugin runtime artifacts. Regression-test
+executables are opt-in:
+
+```bash
+make test
+```
+
+For a custom Groot SDK location, use
+`make GROOT_PLUGIN_SDK=/absolute/path/to/plugin-sdk`.
+
+The equivalent direct CMake commands are:
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_PREFIX_PATH="/path/to/groot-plugin-sdk" \
+  -DBUILD_TESTING=ON
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
 ```
