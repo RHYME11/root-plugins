@@ -13,8 +13,42 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 find_package(ROOT REQUIRED COMPONENTS Core Hist Graf Gpad Matrix MathCore)
-find_package(GrootPlugin REQUIRED CONFIG)
 include(GNUInstallDirs)
+
+set(GROOT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../groot" CACHE PATH
+  "Path to the Groot source tree"
+)
+set(GROOT_BUILD_DIR "${GROOT_SOURCE_DIR}/build" CACHE PATH
+  "Path to the Groot build tree"
+)
+
+if(NOT EXISTS "${GROOT_SOURCE_DIR}/include/Plugin/GPlugin.h")
+  message(FATAL_ERROR
+    "Groot Plugin API headers were not found under ${GROOT_SOURCE_DIR}/include"
+  )
+endif()
+
+find_library(GROOT_PLUGIN_LIBRARY
+  NAMES GPLUGIN
+  PATHS "${GROOT_BUILD_DIR}/lib"
+  NO_DEFAULT_PATH
+  REQUIRED
+)
+
+add_library(GrootPluginApi INTERFACE)
+target_include_directories(GrootPluginApi INTERFACE
+  "${GROOT_SOURCE_DIR}/include"
+)
+
+add_library(GrootPluginRuntime SHARED IMPORTED GLOBAL)
+set_target_properties(GrootPluginRuntime PROPERTIES
+  IMPORTED_LOCATION "${GROOT_PLUGIN_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${GROOT_SOURCE_DIR}/include"
+)
+
+set(PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY
+  "${CMAKE_BINARY_DIR}/plugins/PhotoPeakFit"
+)
 
 add_library(PhotoPeakCommon OBJECT
   common/PhotoPeakFitter.cxx
@@ -39,7 +73,7 @@ target_include_directories(PhotoPeakGrootConnector PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(PhotoPeakGrootConnector PRIVATE
-  Groot::Plugin
+  GrootPluginApi
   ROOT::Core
   ROOT::Hist
   ROOT::Gpad
@@ -51,7 +85,7 @@ add_library(PhotoPeakFitPlugin SHARED
   $<TARGET_OBJECTS:PhotoPeakGrootConnector>
 )
 target_link_libraries(PhotoPeakFitPlugin PRIVATE
-  Groot::Plugin
+  GrootPluginApi
   ROOT::Core
   ROOT::Hist
   ROOT::Graf
@@ -60,11 +94,11 @@ target_link_libraries(PhotoPeakFitPlugin PRIVATE
   ROOT::MathCore
 )
 set_target_properties(PhotoPeakFitPlugin PROPERTIES
-  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  LIBRARY_OUTPUT_DIRECTORY ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}
 )
 
 file(GENERATE
-  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/PhotoPeakFit.plugin
+  OUTPUT ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}/PhotoPeakFit.plugin
   CONTENT
 "Plugin.Id: photopeakfit
 Plugin.Name: PhotoPeakFit
@@ -81,7 +115,7 @@ Plugin.Action.0.Tooltip: Run the minimal single-photopeak closure fit
 install(TARGETS PhotoPeakFitPlugin
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/groot/plugins
 )
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/PhotoPeakFit.plugin
+install(FILES ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}/PhotoPeakFit.plugin
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/groot/plugins
 )
 

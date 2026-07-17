@@ -3,13 +3,32 @@
 Optional plugins for ROOT-based applications. Each plugin keeps its ROOT-only
 common implementation separate from application-specific connectors.
 
+Each plugin is a parallel top-level unit with its own public API, common code,
+connectors, and tests:
+
+```text
+root-plugins/
+├── PhotoPeakFit/
+│   ├── common/
+│   ├── connectors/
+│   │   └── groot/
+│   ├── include/
+│   │   └── PhotoPeakFit/
+│   └── tests/
+└── FuturePlugin/
+    ├── common/
+    ├── connectors/
+    ├── include/
+    └── tests/
+```
+
 ## Build all plugins
 
-Install ROOT and the Groot Plugin API, then configure with their CMake package
-locations available in `CMAKE_PREFIX_PATH`:
+Install ROOT and build Groot before configuring this repository. Groot-specific
+connectors use Groot's public Plugin headers and normal build-tree library.
 
-When Groot is in the adjacent `../groot` directory, its `make` target prepares
-the required SDK and root-plugins can be built with one command:
+When Groot is in the adjacent `../groot` directory, root-plugins can be built
+with one command:
 
 ```bash
 make
@@ -22,14 +41,15 @@ executables are opt-in:
 make test
 ```
 
-For a custom Groot SDK location, use
-`make GROOT_PLUGIN_SDK=/absolute/path/to/plugin-sdk`.
+For a custom Groot location, use
+`make GROOT_SOURCE_DIR=/path/to/groot GROOT_BUILD_DIR=/path/to/groot-build`.
 
 The equivalent direct CMake commands are:
 
 ```bash
 cmake -S . -B build \
-  -DCMAKE_PREFIX_PATH="/path/to/groot-plugin-sdk" \
+  -DGROOT_SOURCE_DIR="/path/to/groot" \
+  -DGROOT_BUILD_DIR="/path/to/groot/build" \
   -DBUILD_TESTING=ON
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
@@ -39,13 +59,14 @@ To build only PhotoPeakFit, use its independent CMake entry:
 
 ```bash
 cmake -S PhotoPeakFit -B build-photopeak \
-  -DCMAKE_PREFIX_PATH="/path/to/groot-plugin-sdk"
+  -DGROOT_SOURCE_DIR="/path/to/groot" \
+  -DGROOT_BUILD_DIR="/path/to/groot/build"
 cmake --build build-photopeak -j4
 ctest --test-dir build-photopeak --output-on-failure
 ```
 
-Both forms require a ROOT development installation and an installed
-`GrootPlugin` CMake package. The plugin does not include or compile Groot
+Both forms require a ROOT development installation and a compiled Groot tree.
+The plugin includes Groot's public API headers but does not compile Groot
 source files. An optional install places the library and manifest together:
 
 ```bash
@@ -56,10 +77,10 @@ cmake --install build --prefix "$HOME/.local"
 
 The first plugin is a minimal single-photopeak fitting closure test. It builds
 one shared library and one adjacent ROOT TEnv manifest in
-`build/PhotoPeakFit`.
+`build/plugins/PhotoPeakFit`.
 
 ```bash
-export GROOT_PLUGIN_PATH="$PWD/build/PhotoPeakFit"
+export GROOT_PLUGIN_PATH="$PWD/build/plugins/PhotoPeakFit"
 groot -g /path/to/158_12_05_25_back_subtracted.root
 ```
 

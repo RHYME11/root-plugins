@@ -25,7 +25,7 @@ target_compile_definitions(PhotoPeakConnectorTest PRIVATE
   PHOTOPEAK_TEST_DATA="${PHOTOPEAK_TEST_DATA}"
 )
 target_link_libraries(PhotoPeakConnectorTest PRIVATE
-  Groot::Plugin
+  GrootPluginApi
   ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Matrix ROOT::MathCore
 )
 add_test(NAME PhotoPeakConnector COMMAND PhotoPeakConnectorTest)
@@ -39,7 +39,7 @@ target_compile_definitions(PhotoPeakFullLoopTest PRIVATE
   PHOTOPEAK_PLUGIN_LIBRARY="$<TARGET_FILE_NAME:PhotoPeakFitPlugin>"
 )
 target_link_libraries(PhotoPeakFullLoopTest PRIVATE
-  Groot::Plugin
+  GrootPluginRuntime
   ROOT::Core ROOT::Hist ROOT::Gpad
 )
 add_dependencies(PhotoPeakFullLoopTest PhotoPeakFitPlugin)
