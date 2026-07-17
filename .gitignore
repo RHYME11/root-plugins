@@ -1,0 +1,9 @@
+build/
+build-*/
+*.o
+*.so
+*.dylib
+*.pcm
+*.rootmap
+Testing/
+.DS_Store
