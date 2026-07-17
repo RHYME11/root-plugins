@@ -3,6 +3,7 @@
 
 #include <array>
 #include <string>
+#include <vector>
 
 enum PhotoPeakParameter {
   kPhotoPeakA = 0,
@@ -29,6 +30,17 @@ struct PhotoPeakFitResult {
   double areaError = 0.0;
   std::array<double, kPhotoPeakNPars> parameters{};
   std::array<double, kPhotoPeakNPars> errors{};
+  struct Peak {
+    double centroid = 0.0;
+    double centroidError = 0.0;
+    double height = 0.0;
+    double heightError = 0.0;
+    double fwhm = 0.0;
+    double fwhmError = 0.0;
+    double area = 0.0;
+    double areaError = 0.0;
+  };
+  std::vector<Peak> peaks;
 };
 
 #endif

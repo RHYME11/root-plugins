@@ -53,7 +53,7 @@ int main() {
 
   GPluginManager& manager = GPluginManager::Get();
   manager.SetContextProvider([&canvas, hist]() {
-    return GPluginContext{&canvas, &canvas, hist};
+    return GPluginContext{&canvas, &canvas, hist, hist};
   });
   manager.Initialize();
   bool found = false;

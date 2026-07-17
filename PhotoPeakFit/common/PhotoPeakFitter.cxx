@@ -13,6 +13,8 @@
 #include <TFitResultPtr.h>
 #include <TH1.h>
 #include <TList.h>
+#include <TLegend.h>
+#include <TLatex.h>
 #include <TMath.h>
 #include <TMatrixDSym.h>
 #include <TObject.h>
@@ -176,7 +178,8 @@ void ConfigureFunction(TF1* function, const Candidate& candidate,
                        double r0, double beta0, double step0,
                        double peak0, double fwhm0, double height0,
                        double fitLow, double fitHigh,
-                       double range, double heightUpper) {
+                       double range, double heightUpper,
+                       const PhotoPeakFitConfig& config) {
   function->SetParNames("A", "B", "C", "R", "BETA", "STEP", "P", "W", "H");
   function->SetParameters(a0, b0, c0, r0, beta0, step0,
                           peak0, fwhm0, height0);
@@ -194,6 +197,25 @@ void ConfigureFunction(TF1* function, const Candidate& candidate,
     function->FixParameter(kPhotoPeakStep, 0.0);
   if(!candidate.useQuadBg)
     function->FixParameter(kPhotoPeakC, 0.0);
+  for(int index = 0; index < kPhotoPeakNPars; ++index) {
+    if((index == kPhotoPeakR || index == kPhotoPeakBeta) && !candidate.useTail)
+      continue;
+    if(index == kPhotoPeakStep && !candidate.useStep)
+      continue;
+    if(index == kPhotoPeakC && !candidate.useQuadBg)
+      continue;
+    const auto& control = config.global[index];
+    if(control.mode == PhotoPeakParameterMode::Fixed) {
+      function->FixParameter(index, control.value);
+    } else if(control.mode == PhotoPeakParameterMode::Limited) {
+      if(control.value != 0.0)
+        function->SetParameter(index, control.value);
+      function->SetParLimits(index, std::min(control.lower, control.upper),
+                             std::max(control.lower, control.upper));
+    } else if(control.value != 0.0) {
+      function->SetParameter(index, control.value);
+    }
+  }
   function->SetNpx(2000);
 }
 
@@ -297,6 +319,7 @@ void RemovePreviousDrawObjects(TVirtualPad* pad, TH1* hist) {
 // Inputs: Histogram, fit inputs, and result.
 // Outputs: Flushed terminal report.
 void PrintResult(TH1* hist, double fitLow, double fitHigh, double peak0,
+                 const PhotoPeakFitConfig& config,
                  const PhotoPeakFitResult& result) {
   const int order[kPhotoPeakNPars] = {
     kPhotoPeakPosition, kPhotoPeakHeight, kPhotoPeakFwhm,
@@ -310,8 +333,10 @@ void PrintResult(TH1* hist, double fitLow, double fitHigh, double peak0,
   std::printf("\nphotopeakfit result for %s\n", hist->GetName());
   std::printf("Fit range: [%g, %g], initial peak position: %g\n",
               fitLow, fitHigh, peak0);
-  std::printf("Requested mode: auto\n");
-  std::printf("ROOT fit option: RQSN\n");
+  const char* mode = config.mode == PhotoPeakFitMode::Auto ? "auto" :
+    config.mode == PhotoPeakFitMode::HighStat ? "highstat" : "lowstat";
+  std::printf("Requested mode: %s\n", mode);
+  std::printf("ROOT fit option: %s\n", config.rootOptions.c_str());
   std::printf("TSpectrum background option: none\n");
   std::printf("Relative position fixed: false\n");
   std::printf("Relative FWHM fixed: false\n");
@@ -343,13 +368,23 @@ void PrintResult(TH1* hist, double fitLow, double fitHigh, double peak0,
 // Purpose: Run the minimal default single-photopeak auto fit.
 // Inputs: Histogram, fit limits, initial centroid, optional pad, and draw flag.
 // Outputs: Structured fit result with terminal report and optional curves.
+PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist, double fitLow,
+                                        double fitHigh, double peak0,
+                                        TVirtualPad* pad, bool draw) {
+  return Fit(hist, fitLow, fitHigh, peak0, PhotoPeakFitConfig::Defaults(),
+             pad, draw);
+}
+
 PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
                                         double fitLow,
                                         double fitHigh,
                                         double peak0,
+                                        const PhotoPeakFitConfig& requestedConfig,
                                         TVirtualPad* pad,
                                         bool draw) {
   PhotoPeakFitResult output;
+  PhotoPeakFitConfig config = requestedConfig;
+  config.Normalize(1);
   if(!hist) {
     std::printf("photopeakfit ERROR: null histogram pointer.\n");
     return output;
@@ -407,6 +442,11 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
     trial.freeParameters = FreeParameterCount(trial.candidate);
     const bool basic = !trial.candidate.useTail &&
       !trial.candidate.useStep && !trial.candidate.useQuadBg;
+    const bool selected = config.mode == PhotoPeakFitMode::Auto ||
+      (config.mode == PhotoPeakFitMode::HighStat && index == 7) ||
+      (config.mode == PhotoPeakFitMode::LowStat && index == 0);
+    if(!selected)
+      continue;
     if(!basic && fitBins <= trial.freeParameters)
       continue;
 
@@ -417,8 +457,13 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
     ConfigureFunction(trial.function, trial.candidate,
                       a0, b0, c0, r0, beta0, step0,
                       peak0, fwhm0, height0,
-                      fitLow, fitHigh, range, heightUpper);
-    TFitResultPtr fitResult = hist->Fit(trial.function, "RQSN");
+                      fitLow, fitHigh, range, heightUpper, config);
+    std::string options = config.rootOptions;
+    for(char required : std::string("RSN")) {
+      if(options.find(required) == std::string::npos)
+        options.push_back(required);
+    }
+    TFitResultPtr fitResult = hist->Fit(trial.function, options.c_str());
     trial.status = static_cast<int>(fitResult);
     trial.chi2 = trial.function->GetChisquare();
     trial.ndf = trial.function->GetNDF();
@@ -428,8 +473,12 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
       trial.covariance = fitResult->GetCovarianceMatrix();
     if(basic)
       fallback = &trial;
-    if(TrialIsBetter(&trial, best))
+    if(config.mode == PhotoPeakFitMode::Auto) {
+      if(TrialIsBetter(&trial, best))
+        best = &trial;
+    } else {
       best = &trial;
+    }
   }
 
   if(!best)
@@ -467,7 +516,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
   output.area = PeakArea(output.parameters.data(), binWidth);
   output.areaError = PeakAreaUncertainty(output.parameters.data(),
                                          best->covariance, binWidth);
-  PrintResult(hist, fitLow, fitHigh, peak0, output);
+  PrintResult(hist, fitLow, fitHigh, peak0, config, output);
 
   if(draw) {
     TVirtualPad* targetPad = pad ? pad : gPad;
@@ -500,11 +549,434 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
 
     total->Draw("same");
     background->Draw("same");
+
+    auto* legend = new TLegend(0.68, 0.76, 0.93, 0.9);
+    legend->SetName(TString::Format("PhotoPeak_%p_legend",
+                                   static_cast<void*>(hist)).Data());
+    legend->AddEntry(total, "total fit", "l");
+    legend->AddEntry(background, "background", "l");
+    legend->Draw();
+
+    auto* label = new TLatex(output.parameters[kPhotoPeakPosition],
+      hist->GetMaximum() * 0.76,
+      TString::Format("%.3f", output.parameters[kPhotoPeakPosition]).Data());
+    label->SetName(TString::Format("PhotoPeak_%p_centroid_0",
+                                  static_cast<void*>(hist)).Data());
+    label->SetTextAngle(90.0);
+    label->SetTextColor(kRed);
+    label->SetTextSize(0.03);
+    label->Draw();
     targetPad->Modified();
     targetPad->Update();
   } else {
     delete total;
   }
 
+  return output;
+}
+
+// ============== PhotoPeakFitter::Fit ==============
+// Purpose: Fit a structured single- or multi-peak request.
+// Inputs: Histogram, request, optional pad, and draw flag.
+// Outputs: Structured fit and per-peak results.
+PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
+                                        const PhotoPeakFitRequest& request,
+                                        TVirtualPad* pad,
+                                        bool draw) {
+  if(!hist || request.peaks.empty())
+    return PhotoPeakFitResult{};
+  if(request.peaks.size() == 1) {
+    PhotoPeakFitConfig config = request.config;
+    config.global[kPhotoPeakPosition] = request.peaks.front().centroid;
+    config.global[kPhotoPeakFwhm] = request.peaks.front().fwhm;
+    config.global[kPhotoPeakHeight] = request.peaks.front().height;
+    PhotoPeakFitResult result = Fit(
+      hist, request.fitLow, request.fitHigh,
+      request.peaks.front().centroid.value, config, pad, draw);
+    PhotoPeakFitResult::Peak peak;
+    peak.centroid = result.parameters[kPhotoPeakPosition];
+    peak.centroidError = result.errors[kPhotoPeakPosition];
+    peak.height = result.parameters[kPhotoPeakHeight];
+    peak.heightError = result.errors[kPhotoPeakHeight];
+    peak.fwhm = result.parameters[kPhotoPeakFwhm];
+    peak.fwhmError = result.errors[kPhotoPeakFwhm];
+    peak.area = result.area;
+    peak.areaError = result.areaError;
+    result.peaks.push_back(peak);
+    return result;
+  }
+
+  PhotoPeakFitResult output;
+  const double low = std::min(request.fitLow, request.fitHigh);
+  const double high = std::max(request.fitLow, request.fitHigh);
+  const double midpoint = 0.5 * (low + high);
+  const int peakCount = static_cast<int>(request.peaks.size());
+  PhotoPeakFitConfig config = request.config;
+  config.Normalize(request.peaks.size());
+  const int widthScaleIndex = 6;
+  const int peakBase = 7;
+  const int parameterCount = peakBase + 3 * peakCount;
+  const double referencePosition = request.peaks.front().centroid.value;
+  std::vector<double> positionOffsets;
+  std::vector<double> referenceWidths;
+  for(const auto& seed : request.peaks) {
+    positionOffsets.push_back(seed.centroid.value - referencePosition);
+    referenceWidths.push_back(seed.fwhm.value > 0.0 ? seed.fwhm.value :
+      std::sqrt(std::max(9.0 + 0.004 * seed.centroid.value, 1.0e-12)));
+  }
+  struct MultiCandidate {
+    const char* name;
+    bool tail;
+    bool step;
+    bool quadratic;
+  };
+  const MultiCandidate candidates[] = {
+    {"multi_gaussian_linearBg", false, false, false},
+    {"multi_gaussian_linearBg_tail", true, false, false},
+    {"multi_gaussian_linearBg_step", false, true, false},
+    {"multi_gaussian_linearBg_quadBg", false, false, true},
+    {"multi_gaussian_linearBg_tail_step", true, true, false},
+    {"multi_gaussian_linearBg_tail_quadBg", true, false, true},
+    {"multi_gaussian_linearBg_step_quadBg", false, true, true},
+    {"multi_gaussian_linearBg_tail_step_quadBg", true, true, true}
+  };
+  const double lowValue = BinContentAt(hist, low);
+  const double highValue = BinContentAt(hist, high);
+  std::string options = request.config.rootOptions;
+  for(char required : std::string("RSN")) {
+    if(options.find(required) == std::string::npos)
+      options.push_back(required);
+  }
+  TF1* total = nullptr;
+  TMatrixDSym bestCovariance(parameterCount);
+  MultiCandidate bestCandidate{"", false, false, false};
+  double bestReduced = std::numeric_limits<double>::infinity();
+  int bestStatus = 1;
+  for(int candidateIndex = 0; candidateIndex < 8; ++candidateIndex) {
+    const auto candidate = candidates[candidateIndex];
+    const bool selected = config.mode == PhotoPeakFitMode::Auto ||
+      (config.mode == PhotoPeakFitMode::HighStat && candidateIndex == 7) ||
+      (config.mode == PhotoPeakFitMode::LowStat && candidateIndex == 0);
+    if(!selected)
+      continue;
+    auto evaluator = [midpoint, peakCount, candidate, config,
+                      positionOffsets, referenceWidths, peakBase,
+                      widthScaleIndex](double* x, double* par) {
+      const double centered = x[0] - midpoint;
+      double value = par[kPhotoPeakA] + par[kPhotoPeakB] * centered +
+        par[kPhotoPeakC] * centered * centered;
+      for(int index = 0; index < peakCount; ++index) {
+        const int offset = peakBase + 3 * index;
+        const double position = config.relativePosition ?
+          par[peakBase] + positionOffsets[index] : par[offset];
+        const double fwhm = std::max(config.relativeFwhm ?
+          par[widthScaleIndex] * referenceWidths[index] : par[offset + 1],
+          1.0e-12);
+        const double height = par[offset + 2];
+        const double beta = std::max(par[kPhotoPeakBeta], 1.0e-12);
+        const double sigma = fwhm / 2.35482;
+        const double w = (x[0] - position) / (sigma * TMath::Sqrt2());
+        const double y = fwhm / (beta * 3.33021838);
+        const double gaussian = std::exp(-w * w);
+        double skew = 0.0;
+        if(candidate.tail) {
+          const double argument = (x[0] - position) / beta;
+          if(std::fabs(argument) <= 700.0)
+            skew = std::exp(argument) * TMath::Erfc(w + y) /
+              std::max(TMath::Erfc(y), 1.0e-300);
+        }
+        const double fraction = par[kPhotoPeakR] / 100.0;
+        value += height * ((1.0 - fraction) * gaussian + fraction * skew);
+        if(candidate.step)
+          value += height * par[kPhotoPeakStep] * TMath::Erfc(w) / 200.0;
+      }
+      return value;
+    };
+    auto* trial = new TF1(TString::Format("PhotoPeakTrial_%p_multi_%d",
+      static_cast<void*>(hist), candidateIndex).Data(), evaluator,
+      low, high, parameterCount);
+    trial->SetParameters(0.5 * (lowValue + highValue),
+      (highValue - lowValue) / std::max(high - low, 1.0e-12),
+      0.0, 10.0, 0.5 * referenceWidths.front(), 0.25);
+    trial->SetParameter(widthScaleIndex, 1.0);
+    trial->SetParLimits(kPhotoPeakR, 0.0, 100.0);
+    trial->SetParLimits(kPhotoPeakBeta, 1.0e-6, 10.0 * (high - low));
+    trial->SetParLimits(kPhotoPeakStep, 0.0, 100.0);
+    if(!candidate.tail) {
+      trial->FixParameter(kPhotoPeakR, 0.0);
+      trial->FixParameter(kPhotoPeakBeta, 0.5 * referenceWidths.front());
+    }
+    if(!candidate.step)
+      trial->FixParameter(kPhotoPeakStep, 0.0);
+    if(!candidate.quadratic)
+      trial->FixParameter(kPhotoPeakC, 0.0);
+    for(int parameter = 0; parameter <= kPhotoPeakStep; ++parameter) {
+      if((parameter == kPhotoPeakR || parameter == kPhotoPeakBeta) &&
+         !candidate.tail)
+        continue;
+      if(parameter == kPhotoPeakStep && !candidate.step)
+        continue;
+      if(parameter == kPhotoPeakC && !candidate.quadratic)
+        continue;
+      const auto& control = config.global[parameter];
+      if(control.mode == PhotoPeakParameterMode::Fixed)
+        trial->FixParameter(parameter, control.value);
+      else if(control.mode == PhotoPeakParameterMode::Limited) {
+        if(control.value != 0.0)
+          trial->SetParameter(parameter, control.value);
+        trial->SetParLimits(parameter, std::min(control.lower, control.upper),
+                           std::max(control.lower, control.upper));
+      } else if(control.value != 0.0) {
+        trial->SetParameter(parameter, control.value);
+      }
+    }
+    if(config.relativeFwhm) {
+      trial->SetParLimits(widthScaleIndex, config.widthScale.lower,
+                         config.widthScale.upper);
+      if(config.widthScale.mode == PhotoPeakParameterMode::Fixed)
+        trial->FixParameter(widthScaleIndex, config.widthScale.value);
+    } else {
+      trial->FixParameter(widthScaleIndex, 1.0);
+    }
+    for(int index = 0; index < peakCount; ++index) {
+      const auto& seed = request.peaks[index];
+      const int offset = peakBase + 3 * index;
+      trial->SetParameter(offset, seed.centroid.value);
+      trial->SetParameter(offset + 1, referenceWidths[index]);
+      trial->SetParameter(offset + 2, seed.height.value > 0.0 ? seed.height.value :
+        std::max(BinContentAt(hist, seed.centroid.value) - trial->GetParameter(0), 1.0));
+      trial->SetParLimits(offset, low, high);
+      trial->SetParLimits(offset + 1, 1.0e-6, high - low);
+      trial->SetParLimits(offset + 2, 0.0, 10.0 * MaximumInRange(hist, low, high));
+      if(config.relativePosition && index > 0)
+        trial->FixParameter(offset, seed.centroid.value);
+      if(config.relativeFwhm)
+        trial->FixParameter(offset + 1, referenceWidths[index]);
+      const PhotoPeakParameterControl controls[3] = {
+        seed.centroid, seed.fwhm, seed.height};
+      for(int item = 0; item < 3; ++item) {
+        if((config.relativePosition && index > 0 && item == 0) ||
+           (config.relativeFwhm && item == 1))
+          continue;
+        const int parameter = offset + item;
+        if(controls[item].mode == PhotoPeakParameterMode::Fixed)
+          trial->FixParameter(parameter, controls[item].value);
+        else if(controls[item].mode == PhotoPeakParameterMode::Limited)
+          trial->SetParLimits(parameter, controls[item].lower,
+                             controls[item].upper);
+      }
+    }
+    TFitResultPtr fitResult = hist->Fit(trial, options.c_str());
+    const int status = static_cast<int>(fitResult);
+    const double reduced = trial->GetNDF() > 0 ?
+      trial->GetChisquare() / trial->GetNDF() :
+      std::numeric_limits<double>::infinity();
+    const bool better = !total || (status == 0 && bestStatus != 0) ||
+      (status == bestStatus && reduced < bestReduced);
+    if(better) {
+      delete total;
+      total = trial;
+      bestStatus = status;
+      bestReduced = reduced;
+      output.model = candidate.name;
+      bestCandidate = candidate;
+      bestCovariance.Zero();
+      if(fitResult.Get() && fitResult->CovMatrixStatus() > 0)
+        bestCovariance = fitResult->GetCovarianceMatrix();
+    } else {
+      delete trial;
+    }
+  }
+  if(!total)
+    return output;
+  total->SetName(TString::Format("PhotoPeak_%p_total_fit",
+                                 static_cast<void*>(hist)).Data());
+  output.status = bestStatus;
+  output.chi2 = total->GetChisquare();
+  output.ndf = total->GetNDF();
+  output.reducedChi2 = output.ndf > 0 ? output.chi2 / output.ndf : 0.0;
+  output.fitBins = BinCountInRange(hist, low, high);
+  output.freeParameters = parameterCount;
+  std::vector<double> fittedParameters(parameterCount);
+  for(int parameter = 0; parameter < parameterCount; ++parameter)
+    fittedParameters[parameter] = total->GetParameter(parameter);
+  auto peakAreaAt = [&](int peakIndex, const std::vector<double>& parameters) {
+    const int offset = peakBase + 3 * peakIndex;
+    const double centroid = config.relativePosition ?
+      parameters[peakBase] + positionOffsets[peakIndex] : parameters[offset];
+    double areaParameters[kPhotoPeakNPars] = {0.0};
+    areaParameters[kPhotoPeakR] = parameters[kPhotoPeakR];
+    areaParameters[kPhotoPeakBeta] = parameters[kPhotoPeakBeta];
+    areaParameters[kPhotoPeakFwhm] = config.relativeFwhm ?
+      parameters[widthScaleIndex] * referenceWidths[peakIndex] :
+      parameters[offset + 1];
+    areaParameters[kPhotoPeakHeight] = parameters[offset + 2];
+    return PeakArea(areaParameters, hist->GetXaxis()->GetBinWidth(
+      hist->GetXaxis()->FindFixBin(centroid)));
+  };
+  std::vector<double> totalAreaGradient(parameterCount, 0.0);
+  for(int index = 0; index < peakCount; ++index) {
+    const int offset = peakBase + 3 * index;
+    PhotoPeakFitResult::Peak peak;
+    peak.centroid = config.relativePosition ? total->GetParameter(peakBase) +
+      positionOffsets[index] : total->GetParameter(offset);
+    peak.centroidError = config.relativePosition ? total->GetParError(peakBase) :
+      total->GetParError(offset);
+    peak.fwhm = config.relativeFwhm ? total->GetParameter(widthScaleIndex) *
+      referenceWidths[index] : total->GetParameter(offset + 1);
+    peak.fwhmError = config.relativeFwhm ? total->GetParError(widthScaleIndex) *
+      referenceWidths[index] : total->GetParError(offset + 1);
+    peak.height = total->GetParameter(offset + 2);
+    peak.heightError = total->GetParError(offset + 2);
+    peak.area = peakAreaAt(index, fittedParameters);
+    std::vector<double> gradient(parameterCount, 0.0);
+    for(int parameter = 0; parameter < parameterCount; ++parameter) {
+      const double step = std::sqrt(std::numeric_limits<double>::epsilon()) *
+        std::max(std::fabs(fittedParameters[parameter]), 1.0);
+      auto upper = fittedParameters;
+      auto lowerParameters = fittedParameters;
+      upper[parameter] += step;
+      lowerParameters[parameter] -= step;
+      gradient[parameter] = (peakAreaAt(index, upper) -
+        peakAreaAt(index, lowerParameters)) / (2.0 * step);
+      totalAreaGradient[parameter] += gradient[parameter];
+    }
+    double areaVariance = 0.0;
+    for(int row = 0; row < parameterCount; ++row) {
+      for(int column = 0; column < parameterCount; ++column) {
+        areaVariance += gradient[row] * bestCovariance(row, column) *
+          gradient[column];
+      }
+    }
+    peak.areaError = areaVariance > 0.0 ? std::sqrt(areaVariance) : 0.0;
+    output.area += peak.area;
+    output.peaks.push_back(peak);
+  }
+  double totalAreaVariance = 0.0;
+  for(int row = 0; row < parameterCount; ++row) {
+    for(int column = 0; column < parameterCount; ++column) {
+      totalAreaVariance += totalAreaGradient[row] *
+        bestCovariance(row, column) * totalAreaGradient[column];
+    }
+  }
+  output.areaError = totalAreaVariance > 0.0 ?
+    std::sqrt(totalAreaVariance) : 0.0;
+  std::printf("\nmultipeakfit result for %s\n", hist->GetName());
+  std::printf("Fitting function: %s\nFit status: %d\n", output.model.c_str(),
+              output.status);
+  for(std::size_t index = 0; index < output.peaks.size(); ++index) {
+    const auto& peak = output.peaks[index];
+    std::printf("  Peak %zu: P = %.10g +/- %.10g, W = %.10g +/- %.10g, "
+                "Area = %.10g +/- %.10g\n", index + 1, peak.centroid,
+                peak.centroidError, peak.fwhm, peak.fwhmError, peak.area,
+                peak.areaError);
+  }
+
+  if(draw) {
+    TVirtualPad* targetPad = pad ? pad : gPad;
+    if(targetPad) {
+      targetPad->cd();
+      RemovePreviousDrawObjects(targetPad, hist);
+      total->SetLineColor(kRed);
+      total->SetLineWidth(3);
+      total->Draw("same");
+      auto* legend = new TLegend(0.68, 0.72, 0.93, 0.9);
+      legend->SetName(TString::Format("PhotoPeak_%p_legend",
+                                     static_cast<void*>(hist)).Data());
+      legend->AddEntry(total, "total fit", "l");
+      auto backgroundEvaluator = [midpoint, peakCount, bestCandidate,
+                                  fittedParameters, config, positionOffsets,
+                                  referenceWidths, peakBase, widthScaleIndex]
+        (double* x, double*) {
+          const double centered = x[0] - midpoint;
+          double value = fittedParameters[kPhotoPeakA] +
+            fittedParameters[kPhotoPeakB] * centered +
+            fittedParameters[kPhotoPeakC] * centered * centered;
+          if(bestCandidate.step) {
+            for(int peakIndex = 0; peakIndex < peakCount; ++peakIndex) {
+              const int offset = peakBase + 3 * peakIndex;
+              const double position = config.relativePosition ?
+                fittedParameters[peakBase] + positionOffsets[peakIndex] :
+                fittedParameters[offset];
+              const double fwhm = config.relativeFwhm ?
+                fittedParameters[widthScaleIndex] * referenceWidths[peakIndex] :
+                fittedParameters[offset + 1];
+              const double sigma = std::max(fwhm, 1.0e-12) / 2.35482;
+              const double w = (x[0] - position) /
+                (sigma * TMath::Sqrt2());
+              value += fittedParameters[offset + 2] *
+                fittedParameters[kPhotoPeakStep] * TMath::Erfc(w) / 200.0;
+            }
+          }
+          return value;
+        };
+      auto* background = new TF1(TString::Format(
+        "PhotoPeak_%p_background_fit", static_cast<void*>(hist)).Data(),
+        backgroundEvaluator, low, high, 0);
+      background->SetLineColor(kBlack);
+      background->SetLineStyle(2);
+      background->SetLineWidth(3);
+      background->SetNpx(2000);
+      background->Draw("same");
+      legend->AddEntry(background, "background", "l");
+      for(std::size_t index = 0; index < output.peaks.size(); ++index) {
+        const auto& peak = output.peaks[index];
+        const int color = kBlue + static_cast<int>(index % 4);
+        auto componentEvaluator = [index, bestCandidate, fittedParameters,
+                                   config, positionOffsets, referenceWidths,
+                                   peakBase, widthScaleIndex]
+          (double* x, double*) {
+            const int offset = peakBase + 3 * static_cast<int>(index);
+            const double position = config.relativePosition ?
+              fittedParameters[peakBase] + positionOffsets[index] :
+              fittedParameters[offset];
+            const double fwhm = std::max(config.relativeFwhm ?
+              fittedParameters[widthScaleIndex] * referenceWidths[index] :
+              fittedParameters[offset + 1], 1.0e-12);
+            const double sigma = fwhm / 2.35482;
+            const double w = (x[0] - position) /
+              (sigma * TMath::Sqrt2());
+            const double gaussian = std::exp(-w * w);
+            double skew = 0.0;
+            if(bestCandidate.tail) {
+              const double beta = std::max(
+                fittedParameters[kPhotoPeakBeta], 1.0e-12);
+              const double y = fwhm / (beta * 3.33021838);
+              const double argument = (x[0] - position) / beta;
+              if(std::fabs(argument) <= 700.0) {
+                skew = std::exp(argument) * TMath::Erfc(w + y) /
+                  std::max(TMath::Erfc(y), 1.0e-300);
+              }
+            }
+            const double fraction = fittedParameters[kPhotoPeakR] / 100.0;
+            return fittedParameters[offset + 2] *
+              ((1.0 - fraction) * gaussian + fraction * skew);
+          };
+        auto* component = new TF1(TString::Format(
+          "PhotoPeak_%p_component_%zu", static_cast<void*>(hist), index).Data(),
+          componentEvaluator, low, high, 0);
+        component->SetLineColor(color);
+        component->SetLineWidth(2);
+        component->SetNpx(2000);
+        component->Draw("same");
+        legend->AddEntry(component,
+          TString::Format("peak %zu", index + 1).Data(), "l");
+        auto* label = new TLatex(peak.centroid,
+          hist->GetMaximum() * (0.72 + 0.04 * (index % 4)),
+          TString::Format("%.3f", peak.centroid).Data());
+        label->SetName(TString::Format("PhotoPeak_%p_centroid_%zu",
+                                      static_cast<void*>(hist), index).Data());
+        label->SetTextAngle(90.0);
+        label->SetTextColor(color);
+        label->SetTextSize(0.03);
+        label->Draw();
+      }
+      legend->Draw();
+      targetPad->Modified();
+      targetPad->Update();
+    }
+  } else {
+    delete total;
+  }
   return output;
 }

@@ -1,11 +1,13 @@
 #include <PhotoPeakFit/PhotoPeakFitter.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
 
 #include <TFile.h>
 #include <TH1.h>
+#include <TH1D.h>
 
 namespace {
 
@@ -53,5 +55,34 @@ int main() {
     return Fail("area differs from the macro baseline");
   if(!Near(result.areaError, 37094.31696, 5.0e-6))
     return Fail("area uncertainty differs from the macro baseline");
+
+  TH1D multi("multi_test", "multi_test", 700, 150.0, 220.0);
+  for(int bin = 1; bin <= multi.GetNbinsX(); ++bin) {
+    const double x = multi.GetBinCenter(bin);
+    const double value = 500.0 + 2.0 * (x - 190.0) +
+      30000.0 * std::exp(-std::pow((x - 184.0) / 1.25, 2.0)) +
+      22000.0 * std::exp(-std::pow((x - 199.0) / 1.45, 2.0));
+    multi.SetBinContent(bin, value);
+    multi.SetBinError(bin, std::sqrt(std::max(value, 1.0)));
+  }
+  PhotoPeakFitRequest multiRequest;
+  multiRequest.fitLow = 175.0;
+  multiRequest.fitHigh = 207.0;
+  multiRequest.config.relativeFwhm = false;
+  PhotoPeakSeed first;
+  first.centroid.value = 184.0;
+  first.fwhm.value = 2.08;
+  first.height.value = 30000.0;
+  PhotoPeakSeed second;
+  second.centroid.value = 199.0;
+  second.fwhm.value = 2.41;
+  second.height.value = 22000.0;
+  multiRequest.peaks = {first, second};
+  const auto multiResult = PhotoPeakFitter::Fit(&multi, multiRequest, nullptr, false);
+  if(multiResult.status != 0 || multiResult.peaks.size() != 2)
+    return Fail("multi-peak fit did not converge with two results");
+  if(!Near(multiResult.peaks[0].centroid, 184.0, 2.0e-3) ||
+     !Near(multiResult.peaks[1].centroid, 199.0, 2.0e-3))
+    return Fail("multi-peak centroids differ from the synthetic baseline");
   return 0;
 }

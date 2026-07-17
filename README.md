@@ -10,6 +10,8 @@ connectors, and tests:
 root-plugins/
 ├── PhotoPeakFit/
 │   ├── common/
+│   ├── session/
+│   ├── gui/
 │   ├── connectors/
 │   │   └── groot/
 │   ├── include/
@@ -75,8 +77,9 @@ cmake --install build --prefix "$HOME/.local"
 
 ## PhotoPeakFit
 
-The first plugin is a minimal single-photopeak fitting closure test. It builds
-one shared library and one adjacent ROOT TEnv manifest in
+PhotoPeakFit provides ROOT-only single/multiple-photopeak fitting, a pad-owned
+session and control GUI, and a thin Groot connector. It builds one shared
+library and one adjacent ROOT TEnv manifest in
 `build/plugins/PhotoPeakFit`.
 
 ```bash
@@ -84,8 +87,17 @@ export GROOT_PLUGIN_PATH="$PWD/build/plugins/PhotoPeakFit"
 groot -g /path/to/158_12_05_25_back_subtracted.root
 ```
 
-Draw `ParticleGates/Er/GammaEfficiency_Er`, then select `Peak fit`. The current
-closure test uses the fixed range `[175, 210]` and initial centroid `191.75`.
+Draw `ParticleGates/Er/GammaEfficiency_Er`, then select `Peak fit`. This opens a
+non-modal control window and gives the selected pad to an exclusive PhotoPeak
+session. The session locks one explicitly selected TH1, or the sole TH1 in the
+pad; ambiguous multi-histogram pads require an explicit selection.
+
+In fit mode, ordinary left clicks/drags set the two red fit-range lines and
+Shift-left-click toggles red centroid markers at continuous x coordinates.
+Use `f` to fit, `n` to clean, `w/q` to rebin/undo, left/right arrows to pan,
+`b` to display the PhotoPeak background, and `o` to unzoom. Other Groot input
+bindings are suppressed only in the session-owned pad. Closing the fit window
+or selecting `Exit mode` restores Groot interaction and retains fitted curves.
 
 The plugin is loaded only after the action is selected. Removing
 `GROOT_PLUGIN_PATH` leaves Groot independent of this repository.
@@ -93,5 +105,5 @@ The plugin is loaded only after the action is selected. Removing
 The tests use
 `../macros_root/158_12_05_25_back_subtracted.root` by default. Override it
 when needed with `-DPHOTOPEAK_TEST_DATA=/absolute/path/to/file.root`. They
-cover the ROOT-only numerical baseline, the Groot connector, and manifest
-discovery with lazy dynamic loading.
+cover the ROOT-only single/multiple-peak baseline, session interaction, the
+Groot connector, and manifest discovery with lazy dynamic loading.

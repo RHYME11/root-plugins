@@ -25,7 +25,21 @@ class FakeHost : public GPluginHost {
       status = message ? message : "";
     }
 
+    bool ActivateSession(GPluginSession* session,
+                         const GPluginContext& context) override {
+      activeSession = session;
+      activeContext = context;
+      return session && context.pad;
+    }
+
+    void DeactivateSession(GPluginSession* session) override {
+      if(activeSession == session)
+        activeSession = nullptr;
+    }
+
     std::string status;
+    GPluginSession* activeSession = nullptr;
+    GPluginContext activeContext;
 };
 
 // ============== Fail ==============
@@ -86,10 +100,26 @@ int main() {
   TCanvas canvas("connector_test", "connector_test", 800, 600);
   hist->Draw();
   canvas.Update();
-  GPluginContext context{&canvas, &canvas, hist};
+  GPluginContext context{&canvas, &canvas, hist, hist};
   const bool success = plugin->ExecuteAction("photopeakfit.fit", context);
-  const bool statusOk = host.status == "PhotoPeakFit completed";
-  const bool curvesOk = HasFitCurves(canvas);
+  const bool statusOk = host.status == "PhotoPeak fit mode activated";
+  const bool curvesOk = host.activeSession != nullptr;
+
+  TCanvas ambiguousCanvas("ambiguous_test", "ambiguous_test", 800, 600);
+  auto* firstCopy = dynamic_cast<TH1*>(hist->Clone("first_copy"));
+  auto* secondCopy = dynamic_cast<TH1*>(hist->Clone("second_copy"));
+  firstCopy->SetDirectory(nullptr);
+  secondCopy->SetDirectory(nullptr);
+  firstCopy->Draw();
+  secondCopy->Draw("same");
+  ambiguousCanvas.Update();
+  GPluginContext ambiguous{&ambiguousCanvas, &ambiguousCanvas, nullptr, nullptr};
+  const bool rejectedAmbiguous =
+    !plugin->ExecuteAction("photopeakfit.fit", ambiguous);
+  ambiguous.selected = secondCopy;
+  ambiguous.target = secondCopy;
+  const bool acceptedSelection =
+    plugin->ExecuteAction("photopeakfit.fit", ambiguous);
   GrootDestroyPlugin(plugin);
 
   if(!success)
@@ -98,5 +128,9 @@ int main() {
     return Fail("success status was not delivered to the host");
   if(!curvesOk)
     return Fail("fit curves were not drawn");
+  if(!rejectedAmbiguous)
+    return Fail("ambiguous pad did not require explicit histogram selection");
+  if(!acceptedSelection)
+    return Fail("explicitly selected histogram was not accepted");
   return 0;
 }

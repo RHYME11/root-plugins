@@ -16,6 +16,7 @@ add_test(NAME PhotoPeakCommon COMMAND PhotoPeakCommonTest)
 add_executable(PhotoPeakConnectorTest
   PhotoPeakConnectorTest.cxx
   $<TARGET_OBJECTS:PhotoPeakCommon>
+  $<TARGET_OBJECTS:PhotoPeakSession>
   $<TARGET_OBJECTS:PhotoPeakGrootConnector>
 )
 target_include_directories(PhotoPeakConnectorTest PRIVATE
@@ -26,9 +27,24 @@ target_compile_definitions(PhotoPeakConnectorTest PRIVATE
 )
 target_link_libraries(PhotoPeakConnectorTest PRIVATE
   GrootPluginApi
-  ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Matrix ROOT::MathCore
+  ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
+  ROOT::Matrix ROOT::MathCore
 )
 add_test(NAME PhotoPeakConnector COMMAND PhotoPeakConnectorTest)
+
+add_executable(PhotoPeakSessionTest
+  PhotoPeakSessionTest.cxx
+  $<TARGET_OBJECTS:PhotoPeakCommon>
+  $<TARGET_OBJECTS:PhotoPeakSession>
+)
+target_include_directories(PhotoPeakSessionTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_link_libraries(PhotoPeakSessionTest PRIVATE
+  ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
+  ROOT::Matrix ROOT::MathCore
+)
+add_test(NAME PhotoPeakSession COMMAND PhotoPeakSessionTest)
 
 add_executable(PhotoPeakFullLoopTest
   PhotoPeakFullLoopTest.cxx

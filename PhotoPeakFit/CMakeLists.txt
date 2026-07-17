@@ -12,7 +12,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
 
-find_package(ROOT REQUIRED COMPONENTS Core Hist Graf Gpad Matrix MathCore)
+find_package(ROOT REQUIRED COMPONENTS Core Hist Graf Gpad Gui Matrix MathCore Spectrum)
 include(GNUInstallDirs)
 
 set(GROOT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../groot" CACHE PATH
@@ -51,6 +51,7 @@ set(PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY
 )
 
 add_library(PhotoPeakCommon OBJECT
+  common/PhotoPeakConfig.cxx
   common/PhotoPeakFitter.cxx
 )
 target_include_directories(PhotoPeakCommon PUBLIC
@@ -66,22 +67,44 @@ target_link_libraries(PhotoPeakCommon PUBLIC
 )
 set_target_properties(PhotoPeakCommon PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(PhotoPeakSession OBJECT
+  session/PhotoPeakSession.cxx
+  session/PhotoPeakMarkerController.cxx
+  session/PhotoPeakDrawController.cxx
+  gui/PhotoPeakControlWindow.cxx
+  gui/PhotoPeakParameterRow.cxx
+)
+target_include_directories(PhotoPeakSession PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/gui
+  ${CMAKE_CURRENT_SOURCE_DIR}/session
+)
+target_link_libraries(PhotoPeakSession PUBLIC
+  PhotoPeakCommon
+  ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
+)
+set_target_properties(PhotoPeakSession PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(PhotoPeakGrootConnector OBJECT
   connectors/groot/PhotoPeakGrootPlugin.cxx
+  connectors/groot/PhotoPeakGrootEventAdapter.cxx
 )
 target_include_directories(PhotoPeakGrootConnector PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/connectors/groot
 )
 target_link_libraries(PhotoPeakGrootConnector PRIVATE
   GrootPluginApi
   ROOT::Core
   ROOT::Hist
   ROOT::Gpad
+  PhotoPeakSession
 )
 set_target_properties(PhotoPeakGrootConnector PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(PhotoPeakFitPlugin SHARED
   $<TARGET_OBJECTS:PhotoPeakCommon>
+  $<TARGET_OBJECTS:PhotoPeakSession>
   $<TARGET_OBJECTS:PhotoPeakGrootConnector>
 )
 target_link_libraries(PhotoPeakFitPlugin PRIVATE
@@ -90,6 +113,8 @@ target_link_libraries(PhotoPeakFitPlugin PRIVATE
   ROOT::Hist
   ROOT::Graf
   ROOT::Gpad
+  ROOT::Gui
+  ROOT::Spectrum
   ROOT::Matrix
   ROOT::MathCore
 )
@@ -103,7 +128,7 @@ file(GENERATE
 "Plugin.Id: photopeakfit
 Plugin.Name: PhotoPeakFit
 Plugin.Version: ${PROJECT_VERSION}
-Plugin.ApiVersion: 1
+Plugin.ApiVersion: 2
 Plugin.Library: $<TARGET_FILE_NAME:PhotoPeakFitPlugin>
 Plugin.Action.Count: 1
 Plugin.Action.0.Id: photopeakfit.fit
