@@ -98,6 +98,8 @@ Use `f` to fit, `n` to clean, `w/q` to rebin/undo, left/right arrows to pan,
 `b` to display the PhotoPeak background, and `o` to unzoom. Other Groot input
 bindings are suppressed only in the session-owned pad. Closing the fit window
 or selecting `Exit mode` restores Groot interaction and retains fitted curves.
+Background algorithm options are selected from a checked popup menu; direction,
+polynomial order, and smoothing choices are mutually exclusive groups.
 
 The plugin is loaded only after the action is selected. Removing
 `GROOT_PLUGIN_PATH` leaves Groot independent of this repository.

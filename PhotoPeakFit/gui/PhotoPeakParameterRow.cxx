@@ -12,18 +12,26 @@ PhotoPeakParameterRow::PhotoPeakParameterRow(TGCompositeFrame* parent,
                                              TGWindow* receiver)
   : fIdentifier(identifier) {
   fFrame = new TGHorizontalFrame(parent);
-  fFrame->AddFrame(new TGLabel(fFrame, label),
+  auto* rowLabel = new TGLabel(fFrame, label);
+  rowLabel->SetTextJustify(kTextRight);
+  rowLabel->Resize(84, rowLabel->GetDefaultHeight());
+  fFrame->AddFrame(rowLabel,
                    new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 2, 6, 2, 2));
-  fValue = new TGNumberEntry(fFrame, 0.0, 10, identifier);
+  fValue = new TGNumberEntry(fFrame, 0.0, 9, identifier);
+  fValue->Resize(128, fValue->GetDefaultHeight());
   fFrame->AddFrame(fValue, new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
   fFixed = new TGCheckButton(fFrame, "fix", identifier + 1);
   fLimited = new TGCheckButton(fFrame, "limits", identifier + 2);
+  fFixed->Resize(58, fFixed->GetDefaultHeight());
+  fLimited->Resize(78, fLimited->GetDefaultHeight());
   fFixed->Associate(receiver);
   fLimited->Associate(receiver);
   fFrame->AddFrame(fFixed, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
   fFrame->AddFrame(fLimited, new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
-  fLower = new TGNumberEntry(fFrame, 0.0, 8, identifier + 3);
-  fUpper = new TGNumberEntry(fFrame, 0.0, 8, identifier + 4);
+  fLower = new TGNumberEntry(fFrame, 0.0, 9, identifier + 3);
+  fUpper = new TGNumberEntry(fFrame, 0.0, 9, identifier + 4);
+  fLower->Resize(120, fLower->GetDefaultHeight());
+  fUpper->Resize(120, fUpper->GetDefaultHeight());
   fFrame->AddFrame(fLower, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
   fFrame->AddFrame(fUpper, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
   parent->AddFrame(fFrame, new TGLayoutHints(kLHintsExpandX));
