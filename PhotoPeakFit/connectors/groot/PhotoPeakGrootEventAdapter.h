@@ -19,8 +19,12 @@ class PhotoPeakGrootEventAdapter : public GPluginSession {
     const char* SessionId() const override;
     void ObserveEvent(const GPluginEvent& event) override;
     void Close() override;
+    void Suspend();
+    void Resume();
+    void CleanArtifacts();
     void RaiseWindow();
     TVirtualPad* Pad() const;
+    TH1* Target() const;
     bool IsClosed() const;
 
   private:

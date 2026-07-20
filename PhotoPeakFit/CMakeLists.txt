@@ -34,6 +34,12 @@ find_library(GROOT_PLUGIN_LIBRARY
   NO_DEFAULT_PATH
   REQUIRED
 )
+find_library(GROOT_LIBRARY
+  NAMES GROOTLIB
+  PATHS "${GROOT_BUILD_DIR}/lib"
+  NO_DEFAULT_PATH
+  REQUIRED
+)
 
 add_library(GrootPluginApi INTERFACE)
 target_include_directories(GrootPluginApi INTERFACE
@@ -43,6 +49,11 @@ target_include_directories(GrootPluginApi INTERFACE
 add_library(GrootPluginRuntime SHARED IMPORTED GLOBAL)
 set_target_properties(GrootPluginRuntime PROPERTIES
   IMPORTED_LOCATION "${GROOT_PLUGIN_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${GROOT_SOURCE_DIR}/include"
+)
+add_library(GrootRuntime SHARED IMPORTED GLOBAL)
+set_target_properties(GrootRuntime PROPERTIES
+  IMPORTED_LOCATION "${GROOT_LIBRARY}"
   INTERFACE_INCLUDE_DIRECTORIES "${GROOT_SOURCE_DIR}/include"
 )
 
@@ -96,6 +107,7 @@ target_include_directories(PhotoPeakGrootConnector PRIVATE
 )
 target_link_libraries(PhotoPeakGrootConnector PRIVATE
   GrootPluginApi
+  GrootRuntime
   ROOT::Core
   ROOT::Hist
   ROOT::Gpad
@@ -110,6 +122,7 @@ add_library(PhotoPeakFitPlugin SHARED
 )
 target_link_libraries(PhotoPeakFitPlugin PRIVATE
   GrootPluginApi
+  GrootRuntime
   ROOT::Core
   ROOT::Hist
   ROOT::Graf
@@ -129,7 +142,7 @@ file(GENERATE
 "Plugin.Id: photopeakfit
 Plugin.Name: PhotoPeakFit
 Plugin.Version: ${PROJECT_VERSION}
-Plugin.ApiVersion: 3
+Plugin.ApiVersion: 4
 Plugin.Library: $<TARGET_FILE_NAME:PhotoPeakFitPlugin>
 Plugin.Action.Count: 1
 Plugin.Action.0.Id: photopeakfit.fit

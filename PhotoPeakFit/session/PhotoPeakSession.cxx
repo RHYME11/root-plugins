@@ -211,7 +211,7 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
 }
 
 // ============== PhotoPeakSession::Close ==============
-// Purpose: Close UI and remove interactive markers while retaining fit plots.
+// Purpose: Suspend interaction and hide UI while retaining drawing artifacts.
 // Inputs: None.
 // Outputs: Closed idempotent session.
 void PhotoPeakSession::Close() {
@@ -220,19 +220,41 @@ void PhotoPeakSession::Close() {
   fState.closed = true;
   const bool canvasAlive = fCanvas && gROOT && gROOT->GetListOfCanvases() &&
     gROOT->GetListOfCanvases()->FindObject(fCanvas);
-  if(canvasAlive && fMarkers)
-    fMarkers->Clear();
   if(fWindow)
     fWindow->Hide();
-  if(canvasAlive && fPad) {
-    fPad->Modified();
-    fPad->Update();
-  }
   if(!canvasAlive) {
     fCanvas = nullptr;
     fPad = nullptr;
     fHistogram = nullptr;
   }
+}
+
+// ============== PhotoPeakSession::Abandon ==============
+// Purpose: End a session whose canvas or target lifecycle has ended.
+// Inputs: None.
+// Outputs: Suspended state with all borrowed ROOT pointers released.
+void PhotoPeakSession::Abandon() {
+  Close();
+  fCanvas = nullptr;
+  fPad = nullptr;
+  fHistogram = nullptr;
+}
+
+// ============== PhotoPeakSession::Resume ==============
+// Purpose: Reactivate a suspended session with its prior state and artifacts.
+// Inputs: None.
+// Outputs: Active interaction, synchronized markers, and visible controls.
+void PhotoPeakSession::Resume() {
+  if(!fCanvas || !fPad || !fHistogram)
+    return;
+  fState.closed = false;
+  fDraggingRange = -1;
+  fDraggingPeak = -1;
+  fPeakMoved = false;
+  fPeakWasExisting = false;
+  RefreshMarkers();
+  RefreshGui();
+  RaiseWindow();
 }
 
 void PhotoPeakSession::ExitMode() {
@@ -266,6 +288,7 @@ void PhotoPeakSession::Clean() {
     fMarkers->Clear();
   if(fDrawing)
     fDrawing->CleanFitObjects();
+  RemoveSessionObjects(fPad, "PhotoPeakSession_background");
   fState.fitAvailable = false;
   if(fPad) {
     fPad->Modified();

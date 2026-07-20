@@ -65,7 +65,10 @@ void PhotoPeakGrootEventAdapter::ObserveEvent(const GPluginEvent& event) {
     if(fHost)
       fHost->SetStatusMessage("PhotoPeak target was removed; fit mode closed");
     if(fSession)
-      fSession->ExitMode();
+      fSession->Abandon();
+    fHistogram = nullptr;
+    if(fHost)
+      fHost->DeactivateSession(this);
     return;
   }
   if(!ShouldForwardPhotoPeakEvent(event, fHistogram))
@@ -83,7 +86,35 @@ void PhotoPeakGrootEventAdapter::ObserveEvent(const GPluginEvent& event) {
 
 void PhotoPeakGrootEventAdapter::Close() {
   if(fSession)
-    fSession->Close();
+    fSession->Abandon();
+  fHistogram = nullptr;
+}
+
+// ============== PhotoPeakGrootEventAdapter::Suspend ==============
+// Purpose: Exercise the user Exit-mode path while retaining session state.
+// Inputs: None.
+// Outputs: Inactive resumable session and host deactivation callback.
+void PhotoPeakGrootEventAdapter::Suspend() {
+  if(fSession)
+    fSession->ExitMode();
+}
+
+// ============== PhotoPeakGrootEventAdapter::Resume ==============
+// Purpose: Reactivate the retained PhotoPeak session state and controls.
+// Inputs: None.
+// Outputs: Active common session.
+void PhotoPeakGrootEventAdapter::Resume() {
+  if(fSession)
+    fSession->Resume();
+}
+
+// ============== PhotoPeakGrootEventAdapter::CleanArtifacts ==============
+// Purpose: Delete PhotoPeak drawings associated with this adapter.
+// Inputs: None.
+// Outputs: Markers, fit curves, legend, labels, and background removed.
+void PhotoPeakGrootEventAdapter::CleanArtifacts() {
+  if(fSession)
+    fSession->Clean();
 }
 
 void PhotoPeakGrootEventAdapter::RaiseWindow() {
@@ -93,6 +124,10 @@ void PhotoPeakGrootEventAdapter::RaiseWindow() {
 
 TVirtualPad* PhotoPeakGrootEventAdapter::Pad() const {
   return fSession ? fSession->Pad() : nullptr;
+}
+
+TH1* PhotoPeakGrootEventAdapter::Target() const {
+  return fHistogram;
 }
 
 bool PhotoPeakGrootEventAdapter::IsClosed() const {

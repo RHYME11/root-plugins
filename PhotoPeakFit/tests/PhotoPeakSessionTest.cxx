@@ -4,6 +4,8 @@
 #include <Buttons.h>
 #include <TCanvas.h>
 #include <TH1D.h>
+#include <TList.h>
+#include <TObject.h>
 #include <TROOT.h>
 
 #include <PhotoPeakFit/PhotoPeakSession.h>
@@ -12,6 +14,16 @@ namespace {
 int Fail(const char* message) {
   std::fprintf(stderr, "PhotoPeakSessionTest: %s\n", message);
   return 1;
+}
+
+int CountPhotoPeakMarkers(TCanvas& canvas) {
+  int count = 0;
+  TIter next(canvas.GetListOfPrimitives());
+  while(TObject* object = next()) {
+    if(object->GetUniqueID() == 0x50500001)
+      ++count;
+  }
+  return count;
 }
 }
 
@@ -64,9 +76,16 @@ int main() {
   unknown.type = 9999;
   if(!session.HandleEvent(unknown))
     return Fail("unknown interaction was not handled safely");
-  session.Clean();
   session.Close();
   if(!session.IsClosed())
     return Fail("session did not close");
+  if(CountPhotoPeakMarkers(canvas) == 0)
+    return Fail("session close did not retain interactive markers");
+  session.Resume();
+  if(session.IsClosed())
+    return Fail("session did not resume");
+  session.Clean();
+  if(CountPhotoPeakMarkers(canvas) != 0)
+    return Fail("session cleanup did not remove retained markers");
   return 0;
 }

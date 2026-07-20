@@ -21,12 +21,14 @@ add_executable(PhotoPeakConnectorTest
 )
 target_include_directories(PhotoPeakConnectorTest PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../connectors/groot
 )
 target_compile_definitions(PhotoPeakConnectorTest PRIVATE
   PHOTOPEAK_TEST_DATA="${PHOTOPEAK_TEST_DATA}"
 )
 target_link_libraries(PhotoPeakConnectorTest PRIVATE
   GrootPluginApi
+  GrootRuntime
   ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
   ROOT::Matrix ROOT::MathCore
 )
@@ -44,6 +46,7 @@ target_include_directories(PhotoPeakGrootInteractionTest PRIVATE
 )
 target_link_libraries(PhotoPeakGrootInteractionTest PRIVATE
   GrootPluginApi
+  GrootRuntime
   ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
   ROOT::Matrix ROOT::MathCore
 )

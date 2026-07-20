@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <GMarker.h>
 #include <TH1.h>
 #include <TVirtualPad.h>
 
@@ -29,27 +30,52 @@ class PhotoPeakGrootPlugin : public GPlugin {
         fError = "select a canvas pad first";
         return false;
       }
-      const auto existing = std::find_if(fSessions.begin(), fSessions.end(),
+      const auto active = std::find_if(fSessions.begin(), fSessions.end(),
         [&](const std::unique_ptr<PhotoPeakGrootEventAdapter>& session) {
           return !session->IsClosed() && session->Pad() == context.pad;
         });
-      if(existing != fSessions.end()) {
-        (*existing)->RaiseWindow();
+      if(active != fSessions.end()) {
+        (*active)->RaiseWindow();
         return true;
       }
       TH1* histogram = ResolvePhotoPeakHistogram(context, fError);
       if(!histogram)
         return false;
-      auto session = std::make_unique<PhotoPeakGrootEventAdapter>(
-        fHost, context.canvas, context.pad, histogram);
       GPluginContext sessionContext = context;
       sessionContext.target = histogram;
+      const auto suspended = std::find_if(fSessions.begin(), fSessions.end(),
+        [&](const std::unique_ptr<PhotoPeakGrootEventAdapter>& session) {
+          return session->IsClosed() && session->Pad() == context.pad &&
+            session->Target() == histogram;
+        });
+      if(suspended != fSessions.end()) {
+        if(!fHost || !fHost->ActivateSession(suspended->get(), sessionContext)) {
+          fError = "Groot refused the retained PhotoPeak pad session";
+          return false;
+        }
+        GMarker::RemoveAll(histogram, true);
+        (*suspended)->Resume();
+        fHost->SetStatusMessage("PhotoPeak fit mode resumed");
+        return true;
+      }
+      auto session = std::make_unique<PhotoPeakGrootEventAdapter>(
+        fHost, context.canvas, context.pad, histogram);
       if(!fHost || !fHost->ActivateSession(session.get(), sessionContext)) {
         fError = "Groot refused the PhotoPeak pad session";
         return false;
       }
+      GMarker::RemoveAll(histogram, true);
       fSessions.push_back(std::move(session));
       fHost->SetStatusMessage("PhotoPeak fit mode activated");
+      return true;
+    }
+
+    bool CleanArtifacts(const GPluginContext& context) override {
+      fError.clear();
+      for(const auto& session : fSessions) {
+        if(session->Pad() == context.pad && session->Target() == context.target)
+          session->CleanArtifacts();
+      }
       return true;
     }
 

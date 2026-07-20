@@ -20,6 +20,8 @@ class PhotoPeakSession {
 
     bool HandleEvent(const PhotoPeakInputEvent& event);
     void Close();
+    void Abandon();
+    void Resume();
     void ExitMode();
     void RaiseWindow();
     void Fit();

@@ -100,7 +100,13 @@ Shift-left-click toggles red centroid markers at continuous x coordinates.
 Use `f` to fit, `n` to clean, `w/q` to rebin/undo, left/right arrows to pan,
 `b` to display the PhotoPeak background, and `o` to unzoom. Other Groot input
 bindings are suppressed only in the session-owned pad. Closing the fit window
-or selecting `Exit mode` restores Groot interaction and retains fitted curves.
+or selecting `Exit mode` restores Groot interaction and retains PhotoPeak
+markers and fitted curves. Re-entering the same pad and histogram resumes the
+prior session without duplicating artifacts; the next fit replaces its prior
+fit drawing. Groot's `n` cleanup asks every loaded plugin to remove artifacts
+for the current histogram, and PhotoPeak removes its markers, curves, legend,
+centroid labels, and displayed background. Existing Groot markers on the target
+histogram are deleted whenever PhotoPeak mode is entered or resumed.
 Background algorithm options are selected from a checked popup menu; direction,
 polynomial order, and smoothing choices are mutually exclusive groups.
 
