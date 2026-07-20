@@ -54,7 +54,7 @@ void RemoveSessionObjects(TVirtualPad* pad, const char* prefix) {
 } // namespace
 
 // ============== PhotoPeakSession::PhotoPeakSession ==============
-// Purpose: Create one exclusive PhotoPeak pad session.
+// Purpose: Create one PhotoPeak application-overlay session for a pad.
 // Inputs: Owner canvas, event pad, and target histogram.
 // Outputs: Initialized session and non-modal control window.
 PhotoPeakSession::PhotoPeakSession(TCanvas* canvas, TVirtualPad* pad, TH1* histogram)

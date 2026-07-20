@@ -32,6 +32,23 @@ target_link_libraries(PhotoPeakConnectorTest PRIVATE
 )
 add_test(NAME PhotoPeakConnector COMMAND PhotoPeakConnectorTest)
 
+add_executable(PhotoPeakGrootInteractionTest
+  PhotoPeakGrootInteractionTest.cxx
+  $<TARGET_OBJECTS:PhotoPeakCommon>
+  $<TARGET_OBJECTS:PhotoPeakSession>
+  $<TARGET_OBJECTS:PhotoPeakGrootConnector>
+)
+target_include_directories(PhotoPeakGrootInteractionTest PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../connectors/groot
+)
+target_link_libraries(PhotoPeakGrootInteractionTest PRIVATE
+  GrootPluginApi
+  ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
+  ROOT::Matrix ROOT::MathCore
+)
+add_test(NAME PhotoPeakGrootInteraction COMMAND PhotoPeakGrootInteractionTest)
+
 add_executable(PhotoPeakSessionTest
   PhotoPeakSessionTest.cxx
   $<TARGET_OBJECTS:PhotoPeakCommon>

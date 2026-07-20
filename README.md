@@ -88,9 +88,12 @@ groot -g /path/to/158_12_05_25_back_subtracted.root
 ```
 
 Draw `ParticleGates/Er/GammaEfficiency_Er`, then select `Peak fit`. This opens a
-non-modal control window and gives the selected pad to an exclusive PhotoPeak
-session. The session locks one explicitly selected TH1, or the sole TH1 in the
-pad; ambiguous multi-histogram pads require an explicit selection.
+non-modal control window and gives the selected pad one PhotoPeak
+application-overlay session. ROOT-native canvas, axis, object-selection, and
+context-menu behavior remains active; only Groot-specific interaction is
+suspended. The session locks one explicitly selected TH1, or the sole TH1 in
+the pad; ambiguous multi-histogram pads require an explicit selection. A pad
+and non-null target can each belong to only one interactive plugin session.
 
 In fit mode, ordinary left clicks/drags set the two red fit-range lines and
 Shift-left-click toggles red centroid markers at continuous x coordinates.

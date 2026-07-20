@@ -63,7 +63,7 @@ int main() {
   PhotoPeakInputEvent unknown;
   unknown.type = 9999;
   if(!session.HandleEvent(unknown))
-    return Fail("unknown interaction was not exclusively consumed");
+    return Fail("unknown interaction was not handled safely");
   session.Clean();
   session.Close();
   if(!session.IsClosed())

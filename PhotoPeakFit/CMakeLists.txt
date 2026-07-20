@@ -88,6 +88,7 @@ set_target_properties(PhotoPeakSession PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(PhotoPeakGrootConnector OBJECT
   connectors/groot/PhotoPeakGrootPlugin.cxx
   connectors/groot/PhotoPeakGrootEventAdapter.cxx
+  connectors/groot/PhotoPeakGrootContextResolver.cxx
 )
 target_include_directories(PhotoPeakGrootConnector PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -128,12 +129,12 @@ file(GENERATE
 "Plugin.Id: photopeakfit
 Plugin.Name: PhotoPeakFit
 Plugin.Version: ${PROJECT_VERSION}
-Plugin.ApiVersion: 2
+Plugin.ApiVersion: 3
 Plugin.Library: $<TARGET_FILE_NAME:PhotoPeakFitPlugin>
 Plugin.Action.Count: 1
 Plugin.Action.0.Id: photopeakfit.fit
 Plugin.Action.0.Label: Peak fit
-Plugin.Action.0.Tooltip: Run the minimal single-photopeak closure fit
+Plugin.Action.0.Tooltip: Enter PhotoPeak fit mode for the selected histogram
 "
 )
 

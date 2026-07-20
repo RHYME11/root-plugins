@@ -16,7 +16,8 @@ class PhotoPeakGrootEventAdapter : public GPluginSession {
     PhotoPeakGrootEventAdapter(GPluginHost* host, TCanvas* canvas,
                               TVirtualPad* pad, TH1* histogram);
     ~PhotoPeakGrootEventAdapter() override;
-    bool HandleEvent(const GPluginEvent& event) override;
+    const char* SessionId() const override;
+    void ObserveEvent(const GPluginEvent& event) override;
     void Close() override;
     void RaiseWindow();
     TVirtualPad* Pad() const;
@@ -24,6 +25,7 @@ class PhotoPeakGrootEventAdapter : public GPluginSession {
 
   private:
     GPluginHost* fHost;
+    TH1* fHistogram;
     std::unique_ptr<PhotoPeakSession> fSession;
 };
 

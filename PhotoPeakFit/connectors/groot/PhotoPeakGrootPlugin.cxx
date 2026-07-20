@@ -1,11 +1,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
-#include <vector>
-
 #include <TH1.h>
-#include <TList.h>
-#include <TObject.h>
 #include <TVirtualPad.h>
 
 #include <Plugin/GPlugin.h>
@@ -13,38 +9,9 @@
 #include <Plugin/GPluginVersion.h>
 
 #include "PhotoPeakGrootEventAdapter.h"
+#include "PhotoPeakGrootContextResolver.h"
 
 namespace {
-
-// ============== FindHistogram ==============
-// Purpose: Resolve one unambiguous one-dimensional histogram in a pad.
-// Inputs: Groot action context and error output.
-// Outputs: Selected or sole directly drawn TH1.
-TH1* FindHistogram(const GPluginContext& context, std::string& error) {
-  auto* selected = dynamic_cast<TH1*>(context.selected);
-  const bool selectedInPad = selected && context.pad &&
-    context.pad->GetListOfPrimitives() &&
-    context.pad->GetListOfPrimitives()->FindObject(selected) == selected;
-  if(selectedInPad && selected->GetDimension() == 1)
-    return selected;
-  if(!context.pad || !context.pad->GetListOfPrimitives()) {
-    error = "select or draw one one-dimensional histogram first";
-    return nullptr;
-  }
-  std::vector<TH1*> histograms;
-  TIter next(context.pad->GetListOfPrimitives());
-  while(TObject* object = next()) {
-    auto* hist = dynamic_cast<TH1*>(object);
-    if(hist && hist->GetDimension() == 1)
-      histograms.push_back(hist);
-  }
-  if(histograms.size() == 1)
-    return histograms.front();
-  error = histograms.empty() ?
-    "select or draw one one-dimensional histogram first" :
-    "multiple histograms are drawn; click the target histogram first";
-  return nullptr;
-}
 
 class PhotoPeakGrootPlugin : public GPlugin {
   public:
@@ -70,7 +37,7 @@ class PhotoPeakGrootPlugin : public GPlugin {
         (*existing)->RaiseWindow();
         return true;
       }
-      TH1* histogram = FindHistogram(context, fError);
+      TH1* histogram = ResolvePhotoPeakHistogram(context, fError);
       if(!histogram)
         return false;
       auto session = std::make_unique<PhotoPeakGrootEventAdapter>(
