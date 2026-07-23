@@ -30,6 +30,10 @@ class PhotoPeakGrootPlugin : public GPlugin {
         fError = "select a canvas pad first";
         return false;
       }
+      fSessions.erase(std::remove_if(fSessions.begin(), fSessions.end(),
+        [](const std::unique_ptr<PhotoPeakGrootEventAdapter>& session) {
+          return session->Target() == nullptr;
+        }), fSessions.end());
       const auto active = std::find_if(fSessions.begin(), fSessions.end(),
         [&](const std::unique_ptr<PhotoPeakGrootEventAdapter>& session) {
           return !session->IsClosed() && session->Pad() == context.pad;
@@ -43,21 +47,6 @@ class PhotoPeakGrootPlugin : public GPlugin {
         return false;
       GPluginContext sessionContext = context;
       sessionContext.target = histogram;
-      const auto suspended = std::find_if(fSessions.begin(), fSessions.end(),
-        [&](const std::unique_ptr<PhotoPeakGrootEventAdapter>& session) {
-          return session->IsClosed() && session->Pad() == context.pad &&
-            session->Target() == histogram;
-        });
-      if(suspended != fSessions.end()) {
-        if(!fHost || !fHost->ActivateSession(suspended->get(), sessionContext)) {
-          fError = "Groot refused the retained PhotoPeak pad session";
-          return false;
-        }
-        GMarker::RemoveAll(histogram, true);
-        (*suspended)->Resume();
-        fHost->SetStatusMessage("PhotoPeak fit mode resumed");
-        return true;
-      }
       auto session = std::make_unique<PhotoPeakGrootEventAdapter>(
         fHost, context.canvas, context.pad, histogram);
       if(!fHost || !fHost->ActivateSession(session.get(), sessionContext)) {

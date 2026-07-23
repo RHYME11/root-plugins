@@ -19,16 +19,13 @@ class PhotoPeakSession {
     ~PhotoPeakSession();
 
     bool HandleEvent(const PhotoPeakInputEvent& event);
-    void Close();
     void Abandon();
-    void Resume();
     void ExitMode();
     void RaiseWindow();
     void Fit();
     void Clean();
     void SetRange(double low, double high);
     void AddPeak(double centroid);
-    void RemovePeak(std::size_t index);
     void ReplaceRequest(const PhotoPeakFitRequest& request);
 
     TCanvas* Canvas() const { return fCanvas; }
@@ -39,6 +36,7 @@ class PhotoPeakSession {
     void SetExitCallback(std::function<void()> callback);
 
   private:
+    void Close();
     void RefreshMarkers();
     void RefreshGui();
     void Rebin(bool undo);

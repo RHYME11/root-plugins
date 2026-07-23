@@ -660,8 +660,8 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
     if(!selected)
       continue;
     auto evaluator = [midpoint, peakCount, candidate, config,
-                      positionOffsets, referenceWidths, peakBase,
-                      widthScaleIndex](double* x, double* par) {
+                      positionOffsets, referenceWidths](double* x,
+                                                        double* par) {
       const double centered = x[0] - midpoint;
       double value = par[kPhotoPeakA] + par[kPhotoPeakB] * centered +
         par[kPhotoPeakC] * centered * centered;
@@ -886,7 +886,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
       legend->AddEntry(total, "total fit", "l");
       auto backgroundEvaluator = [midpoint, peakCount, bestCandidate,
                                   fittedParameters, config, positionOffsets,
-                                  referenceWidths, peakBase, widthScaleIndex]
+                                  referenceWidths]
         (double* x, double*) {
           const double centered = x[0] - midpoint;
           double value = fittedParameters[kPhotoPeakA] +
@@ -923,8 +923,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
         const auto& peak = output.peaks[index];
         const int color = kBlue + static_cast<int>(index % 4);
         auto componentEvaluator = [index, bestCandidate, fittedParameters,
-                                   config, positionOffsets, referenceWidths,
-                                   peakBase, widthScaleIndex]
+                                   config, positionOffsets, referenceWidths]
           (double* x, double*) {
             const int offset = peakBase + 3 * static_cast<int>(index);
             const double position = config.relativePosition ?

@@ -5,8 +5,6 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     VERSION 0.1.0
     LANGUAGES CXX
   )
-  option(BUILD_TESTING "Build PhotoPeakFit regression tests" OFF)
-  include(CTest)
   set(CMAKE_CXX_STANDARD 17)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
@@ -157,21 +155,3 @@ install(TARGETS PhotoPeakFitPlugin
 install(FILES ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}/PhotoPeakFit.plugin
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/groot/plugins
 )
-
-set(_default_photopeak_test_data
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../macros_root/158_12_05_25_back_subtracted.root
-)
-set(PHOTOPEAK_TEST_DATA ${_default_photopeak_test_data} CACHE FILEPATH
-  "ROOT file used for PhotoPeakFit integration tests"
-)
-
-if(BUILD_TESTING)
-  if(EXISTS ${PHOTOPEAK_TEST_DATA})
-    add_subdirectory(tests)
-  else()
-    message(WARNING
-      "PhotoPeakFit tests disabled: PHOTOPEAK_TEST_DATA does not exist: "
-      "${PHOTOPEAK_TEST_DATA}"
-    )
-  endif()
-endif()

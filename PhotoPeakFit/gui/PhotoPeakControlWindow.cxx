@@ -10,10 +10,8 @@
 #include <TGCanvas.h>
 #include <TGComboBox.h>
 #include <TGLabel.h>
-#include <TGListBox.h>
 #include <TGMenu.h>
 #include <TGNumberEntry.h>
-#include <TGTab.h>
 #include <TGTextEntry.h>
 #include <TString.h>
 #include <TVirtualX.h>
@@ -34,6 +32,8 @@ enum ControlId {
   kBackgroundOptions,
   kRelativePosition,
   kRelativeFwhm,
+  kPreviousPeakPage = 200,
+  kNextPeakPage,
   kBackDecreasingWindow = 500,
   kBackIncreasingWindow,
   kBackOrder2,
@@ -50,6 +50,10 @@ enum ControlId {
   kBackSmoothing15,
   kBackCompton
 };
+
+constexpr std::size_t kPeakRowsPerPage = 3;
+constexpr UInt_t kPeakViewportHeight = 360;
+constexpr Long_t kDeletePeakBase = 2000;
 
 struct BackgroundOption {
   int id;
@@ -140,6 +144,7 @@ void ToggleBackgroundOption(TGPopupMenu* menu, int identifier) {
 class PhotoPeakControlWindow::Impl {
   public:
     struct PeakRows {
+      TGGroupFrame* group;
       PhotoPeakParameterRow* centroid;
       PhotoPeakParameterRow* height;
       PhotoPeakParameterRow* fwhm;
@@ -150,6 +155,9 @@ class PhotoPeakControlWindow::Impl {
     TGNumberEntry* rangeHigh = nullptr;
     TGCanvas* peakCanvas = nullptr;
     TGVerticalFrame* peakContainer = nullptr;
+    TGLabel* peakPageLabel = nullptr;
+    TGTextButton* previousPeakPage = nullptr;
+    TGTextButton* nextPeakPage = nullptr;
     TGComboBox* mode = nullptr;
     TGTextEntry* rootOptions = nullptr;
     TGComboBox* background = nullptr;
@@ -161,6 +169,9 @@ class PhotoPeakControlWindow::Impl {
     TGCheckButton* relativePosition = nullptr;
     TGCheckButton* relativeFwhm = nullptr;
     std::vector<PeakRows> peaks;
+    std::vector<double> previousCentroids;
+    std::size_t peakPage = 0;
+    bool subwindowsMapped = false;
     std::array<PhotoPeakParameterRow*, 7> globals{};
 };
 
@@ -182,11 +193,30 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   range->AddFrame(apply, new TGLayoutHints(kLHintsLeft, 6, 2, 4, 4));
   AddFrame(range, new TGLayoutHints(kLHintsExpandX));
 
-  fImpl->peakCanvas = new TGCanvas(this, 625, 320);
+  fImpl->peakCanvas = new TGCanvas(this, 625, kPeakViewportHeight);
   fImpl->peakContainer = new TGVerticalFrame(fImpl->peakCanvas->GetViewPort());
+  fImpl->peakContainer->SetCleanup(kDeepCleanup);
   fImpl->peakCanvas->SetContainer(fImpl->peakContainer);
+  fImpl->peakCanvas->SetScrolling(TGCanvas::kCanvasNoScroll);
   AddFrame(fImpl->peakCanvas,
            new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 4, 4, 2, 2));
+
+  auto* peakPages = new TGHorizontalFrame(this);
+  fImpl->previousPeakPage = new TGTextButton(
+    peakPages, "Previous", kPreviousPeakPage);
+  fImpl->nextPeakPage = new TGTextButton(
+    peakPages, "Next", kNextPeakPage);
+  fImpl->peakPageLabel = new TGLabel(peakPages, "no initial peaks");
+  fImpl->previousPeakPage->Associate(this);
+  fImpl->nextPeakPage->Associate(this);
+  peakPages->AddFrame(fImpl->previousPeakPage,
+    new TGLayoutHints(kLHintsLeft, 4, 4, 2, 2));
+  peakPages->AddFrame(fImpl->peakPageLabel,
+    new TGLayoutHints(kLHintsCenterX | kLHintsCenterY, 8, 8, 2, 2));
+  peakPages->AddFrame(fImpl->nextPeakPage,
+    new TGLayoutHints(kLHintsRight, 4, 4, 2, 2));
+  AddFrame(peakPages, new TGLayoutHints(kLHintsExpandX));
+
   auto* addPeak = new TGTextButton(this, "Add peak", kAddPeak);
   addPeak->Associate(this);
   AddFrame(addPeak, new TGLayoutHints(kLHintsLeft, 4, 2, 2, 4));
@@ -284,23 +314,40 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   Refresh();
 }
 
-PhotoPeakControlWindow::~PhotoPeakControlWindow() = default;
+PhotoPeakControlWindow::~PhotoPeakControlWindow() {
+  for(auto& rows : fImpl->peaks) {
+    delete rows.centroid;
+    delete rows.height;
+    delete rows.fwhm;
+  }
+  for(auto* row : fImpl->globals)
+    delete row;
+  if(fImpl->peakCanvas && fImpl->peakContainer) {
+    fImpl->peakCanvas->SetContainer(nullptr);
+    delete fImpl->peakContainer;
+    fImpl->peakContainer = nullptr;
+  }
+}
 
 Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
                                                Long_t) {
   if(GET_MSG(message) != kC_COMMAND)
     return TGMainFrame::ProcessMessage(message, parameter1, 0);
-  auto pull = [&]() {
+  auto readRequest = [&]() {
     PhotoPeakFitRequest request = fImpl->session->State().request;
     request.fitLow = fImpl->rangeLow->GetNumber();
     request.fitHigh = fImpl->rangeHigh->GetNumber();
-    request.peaks.clear();
-    for(auto& rows : fImpl->peaks) {
+    const std::size_t pageStart = fImpl->peakPage * kPeakRowsPerPage;
+    for(std::size_t slot = 0; slot < fImpl->peaks.size(); ++slot) {
+      const std::size_t peakIndex = pageStart + slot;
+      if(peakIndex >= request.peaks.size())
+        break;
+      auto& rows = fImpl->peaks[slot];
       PhotoPeakSeed seed;
       seed.centroid = rows.centroid->Get();
       seed.height = rows.height->Get();
       seed.fwhm = rows.fwhm->Get();
-      request.peaks.push_back(seed);
+      request.peaks[peakIndex] = seed;
     }
     request.config.mode = static_cast<PhotoPeakFitMode>(fImpl->mode->GetSelected());
     request.config.rootOptions = fImpl->rootOptions->GetText();
@@ -319,8 +366,25 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
     for(int index = 0; index < 6; ++index)
       request.config.global[parameterMap[index]] = fImpl->globals[index]->Get();
     request.config.widthScale = fImpl->globals[6]->Get();
-    fImpl->session->ReplaceRequest(request);
+    return request;
   };
+  auto pull = [&]() {
+    fImpl->session->ReplaceRequest(readRequest());
+  };
+  if(parameter1 >= kDeletePeakBase &&
+     parameter1 < kDeletePeakBase +
+       static_cast<Long_t>(kPeakRowsPerPage)) {
+    PhotoPeakFitRequest request = readRequest();
+    const std::size_t slot =
+      static_cast<std::size_t>(parameter1 - kDeletePeakBase);
+    const std::size_t peakIndex =
+      fImpl->peakPage * kPeakRowsPerPage + slot;
+    if(peakIndex < request.peaks.size()) {
+      request.peaks.erase(request.peaks.begin() + peakIndex);
+      fImpl->session->ReplaceRequest(request);
+    }
+    return kTRUE;
+  }
   switch(parameter1) {
     case kFit: pull(); fImpl->session->Fit(); return kTRUE;
     case kClean: fImpl->session->Clean(); return kTRUE;
@@ -330,8 +394,24 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
       pull();
       fImpl->session->AddPeak(0.5 * (fImpl->rangeLow->GetNumber() +
                                      fImpl->rangeHigh->GetNumber()));
+      return kTRUE;
+    case kPreviousPeakPage:
+      pull();
+      if(fImpl->peakPage > 0)
+        --fImpl->peakPage;
       Refresh();
       return kTRUE;
+    case kNextPeakPage: {
+      pull();
+      const std::size_t peakCount =
+        fImpl->session->State().request.peaks.size();
+      const std::size_t pageCount = peakCount == 0 ? 1 :
+        (peakCount + kPeakRowsPerPage - 1) / kPeakRowsPerPage;
+      if(fImpl->peakPage + 1 < pageCount)
+        ++fImpl->peakPage;
+      Refresh();
+      return kTRUE;
+    }
     case kBackgroundOptions: {
       Int_t x = 0;
       Int_t y = 0;
@@ -357,7 +437,13 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
       }
       for(auto& row : fImpl->globals)
         row->HandleToggle(static_cast<int>(parameter1));
-      for(auto& peak : fImpl->peaks) {
+      const std::size_t peakCount =
+        fImpl->session->State().request.peaks.size();
+      const std::size_t pageStart = fImpl->peakPage * kPeakRowsPerPage;
+      for(std::size_t slot = 0; slot < fImpl->peaks.size(); ++slot) {
+        if(pageStart + slot >= peakCount)
+          break;
+        auto& peak = fImpl->peaks[slot];
         peak.centroid->HandleToggle(static_cast<int>(parameter1));
         peak.height->HandleToggle(static_cast<int>(parameter1));
         peak.fwhm->HandleToggle(static_cast<int>(parameter1));
@@ -377,29 +463,96 @@ void PhotoPeakControlWindow::Refresh() {
   const auto& request = fImpl->session->State().request;
   fImpl->rangeLow->SetNumber(request.fitLow);
   fImpl->rangeHigh->SetNumber(request.fitHigh);
-  for(auto& rows : fImpl->peaks) {
-    delete rows.centroid;
-    delete rows.height;
-    delete rows.fwhm;
+  if(request.peaks.size() > fImpl->previousCentroids.size()) {
+    std::vector<bool> matched(fImpl->previousCentroids.size(), false);
+    for(std::size_t index = 0; index < request.peaks.size(); ++index) {
+      const double centroid = request.peaks[index].centroid.value;
+      bool found = false;
+      for(std::size_t old = 0; old < fImpl->previousCentroids.size(); ++old) {
+        if(!matched[old] && fImpl->previousCentroids[old] == centroid) {
+          matched[old] = true;
+          found = true;
+          break;
+        }
+      }
+      if(!found) {
+        fImpl->peakPage = index / kPeakRowsPerPage;
+        break;
+      }
+    }
   }
-  fImpl->peaks.clear();
-  fImpl->peakContainer->Cleanup();
-  int identifier = 1000;
-  for(std::size_t index = 0; index < request.peaks.size(); ++index) {
+  const std::size_t pageCount = request.peaks.empty() ? 1 :
+    (request.peaks.size() + kPeakRowsPerPage - 1) / kPeakRowsPerPage;
+  fImpl->peakPage = std::min(fImpl->peakPage, pageCount - 1);
+  const std::size_t requiredRows =
+    std::min(kPeakRowsPerPage, request.peaks.size());
+  bool rowsCreated = false;
+  while(fImpl->peaks.size() < requiredRows) {
+    const std::size_t index = fImpl->peaks.size();
+    const int identifier = 1000 + static_cast<int>(40 * index);
     auto* group = new TGGroupFrame(fImpl->peakContainer,
       (std::string("initial peak ") + std::to_string(index + 1)).c_str());
+    group->SetCleanup(kDeepCleanup);
+    auto* content = new TGHorizontalFrame(group);
+    content->SetCleanup(kDeepCleanup);
+    auto* parameters = new TGVerticalFrame(content);
+    parameters->SetCleanup(kDeepCleanup);
     Impl::PeakRows rows;
-    rows.centroid = new PhotoPeakParameterRow(group, "centroid", identifier, this);
-    rows.height = new PhotoPeakParameterRow(group, "height", identifier + 10, this);
-    rows.fwhm = new PhotoPeakParameterRow(group, "FWHM", identifier + 20, this);
-    rows.centroid->Set(request.peaks[index].centroid);
-    rows.height->Set(request.peaks[index].height);
-    rows.fwhm->Set(request.peaks[index].fwhm);
-    rows.fwhm->SetEnabled(!request.config.relativeFwhm || request.peaks.size() < 2);
+    rows.group = group;
+    rows.centroid = new PhotoPeakParameterRow(
+      parameters, "centroid", identifier, this);
+    rows.height = new PhotoPeakParameterRow(
+      parameters, "height", identifier + 10, this);
+    rows.fwhm = new PhotoPeakParameterRow(
+      parameters, "FWHM", identifier + 20, this);
+    auto* deletePeak = new TGTextButton(
+      content, "Delete", kDeletePeakBase + static_cast<Long_t>(index));
+    deletePeak->Associate(this);
+    deletePeak->Resize(72, 32);
+    content->AddFrame(parameters,
+      new TGLayoutHints(kLHintsExpandX | kLHintsCenterY));
+    content->AddFrame(deletePeak,
+      new TGLayoutHints(kLHintsRight | kLHintsCenterY, 8, 8, 4, 4));
+    group->AddFrame(content, new TGLayoutHints(kLHintsExpandX));
     fImpl->peakContainer->AddFrame(group, new TGLayoutHints(kLHintsExpandX));
     fImpl->peaks.push_back(rows);
-    identifier += 40;
+    rowsCreated = true;
   }
+  if(rowsCreated || !fImpl->subwindowsMapped) {
+    MapSubwindows();
+    fImpl->subwindowsMapped = true;
+  }
+  const std::size_t pageStart = fImpl->peakPage * kPeakRowsPerPage;
+  for(std::size_t slot = 0; slot < fImpl->peaks.size(); ++slot) {
+    const std::size_t peakIndex = pageStart + slot;
+    auto& rows = fImpl->peaks[slot];
+    if(peakIndex < request.peaks.size()) {
+      rows.group->SetTitle(
+        (std::string("initial peak ") + std::to_string(peakIndex + 1)).c_str());
+      rows.centroid->Set(request.peaks[peakIndex].centroid);
+      rows.height->Set(request.peaks[peakIndex].height);
+      rows.fwhm->Set(request.peaks[peakIndex].fwhm);
+      rows.fwhm->SetEnabled(!request.config.relativeFwhm ||
+                            request.peaks.size() < 2);
+      fImpl->peakContainer->ShowFrame(rows.group);
+    } else {
+      fImpl->peakContainer->HideFrame(rows.group);
+    }
+  }
+  if(request.peaks.empty()) {
+    fImpl->peakPageLabel->SetText("no initial peaks");
+  } else {
+    const std::size_t pageEnd = std::min(
+      pageStart + kPeakRowsPerPage, request.peaks.size());
+    fImpl->peakPageLabel->SetText(TString::Format(
+      "peaks %zu-%zu of %zu (page %zu/%zu)", pageStart + 1, pageEnd,
+      request.peaks.size(), fImpl->peakPage + 1, pageCount).Data());
+  }
+  fImpl->previousPeakPage->SetEnabled(fImpl->peakPage > 0);
+  fImpl->nextPeakPage->SetEnabled(fImpl->peakPage + 1 < pageCount);
+  fImpl->previousCentroids.clear();
+  for(const auto& peak : request.peaks)
+    fImpl->previousCentroids.push_back(peak.centroid.value);
   fImpl->mode->Select(static_cast<int>(request.config.mode), false);
   fImpl->rootOptions->SetText(request.config.rootOptions.c_str());
   fImpl->background->Select(static_cast<int>(request.config.background), false);
@@ -441,13 +594,13 @@ void PhotoPeakControlWindow::Refresh() {
   fImpl->globals[6]->Set(request.config.widthScale);
   fImpl->globals[6]->SetEnabled(!lowStat && multiple &&
                                 request.config.relativeFwhm);
-  MapSubwindows();
   Layout();
   fImpl->peakContainer->Layout();
+  fImpl->peakCanvas->Layout();
 }
 
 void PhotoPeakControlWindow::Show() {
-  MapSubwindows();
+  Refresh();
   Resize(GetDefaultSize());
   MapWindow();
   RaiseWindow();

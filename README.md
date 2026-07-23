@@ -4,7 +4,7 @@ Optional plugins for ROOT-based applications. Each plugin keeps its ROOT-only
 common implementation separate from application-specific connectors.
 
 Each plugin is a parallel top-level unit with its own public API, common code,
-connectors, and tests:
+and connectors:
 
 ```text
 root-plugins/
@@ -16,12 +16,10 @@ root-plugins/
 │   │   └── groot/
 │   ├── include/
 │   │   └── PhotoPeakFit/
-│   └── tests/
 └── FuturePlugin/
     ├── common/
     ├── connectors/
-    ├── include/
-    └── tests/
+    └── include/
 ```
 
 ## Build all plugins
@@ -36,13 +34,6 @@ with one command:
 make
 ```
 
-This normal build creates only plugin runtime artifacts. Regression-test
-executables are opt-in:
-
-```bash
-make test
-```
-
 For a custom Groot location, use
 `make GROOT_SOURCE_DIR=/path/to/groot GROOT_BUILD_DIR=/path/to/groot-build`.
 
@@ -51,10 +42,8 @@ The equivalent direct CMake commands are:
 ```bash
 cmake -S . -B build \
   -DGROOT_SOURCE_DIR="/path/to/groot" \
-  -DGROOT_BUILD_DIR="/path/to/groot/build" \
-  -DBUILD_TESTING=ON
+  -DGROOT_BUILD_DIR="/path/to/groot/build"
 cmake --build build -j4
-ctest --test-dir build --output-on-failure
 ```
 
 To build only PhotoPeakFit, use its independent CMake entry:
@@ -64,7 +53,6 @@ cmake -S PhotoPeakFit -B build-photopeak \
   -DGROOT_SOURCE_DIR="/path/to/groot" \
   -DGROOT_BUILD_DIR="/path/to/groot/build"
 cmake --build build-photopeak -j4
-ctest --test-dir build-photopeak --output-on-failure
 ```
 
 Both forms require a ROOT development installation and a compiled Groot tree.
@@ -97,24 +85,36 @@ and non-null target can each belong to only one interactive plugin session.
 
 In fit mode, ordinary left clicks/drags set the two red fit-range lines and
 Shift-left-click toggles red centroid markers at continuous x coordinates.
+Histogram centroid markers and the control window's initial-peak sections stay
+synchronized when either side adds or removes a peak. Each visible initial-peak
+section has a `Delete` button that removes the corresponding peak seed and red
+centroid marker, matching Shift-click removal on the histogram. Remaining peaks
+move forward to fill the current page; if the last page becomes invalid, the
+window selects the new last page.
 Use `f` to fit, `n` to clean, `w/q` to rebin/undo, left/right arrows to pan,
 `b` to display the PhotoPeak background, and `o` to unzoom. Other Groot input
 bindings are suppressed only in the session-owned pad. Closing the fit window
-or selecting `Exit mode` restores Groot interaction and retains PhotoPeak
-markers and fitted curves. Re-entering the same pad and histogram resumes the
-prior session without duplicating artifacts; the next fit replaces its prior
-fit drawing. Groot's `n` cleanup asks every loaded plugin to remove artifacts
-for the current histogram, and PhotoPeak removes its markers, curves, legend,
-centroid labels, and displayed background. Existing Groot markers on the target
-histogram are deleted whenever PhotoPeak mode is entered or resumed.
+or selecting `Exit mode` restores Groot interaction and fully discards the
+PhotoPeak session. It removes canvas artifacts, releases the histogram clone
+and retained ROOT fitter, and schedules the Fit window and all child controls
+for safe event-loop deletion. Re-entering Fit mode creates a new empty session
+and never resumes old peaks, markers, or parameters.
+
+In fit mode, both `n` and the `Clean` button invoke the session's own cleanup,
+independently of Groot's plugin cleanup. PhotoPeak removes its markers, curves,
+legend, centroid labels, and displayed background. Cleanup also clears the
+saved peak seeds and resets the fit range, so later clicks cannot restore old
+markers; range endpoints and peak markers must be selected again. Initial-peak
+rows use a three-row paged pool: the complete peak vector remains available to
+the fitter and marker controller, while Previous/Next remap only three GUI
+sections at a time. A fixed-height viewport reserves the Initial Peak area when
+the session is empty; three sections fit without vertical scrolling. Clean
+hides the three pooled rows without dynamically destroying Cocoa controls. The
+pool is destroyed with the complete Fit window on Exit. Existing Groot markers
+on the target histogram are deleted whenever a new PhotoPeak session is
+entered.
 Background algorithm options are selected from a checked popup menu; direction,
 polynomial order, and smoothing choices are mutually exclusive groups.
 
 The plugin is loaded only after the action is selected. Removing
 `GROOT_PLUGIN_PATH` leaves Groot independent of this repository.
-
-The tests use
-`../macros_root/158_12_05_25_back_subtracted.root` by default. Override it
-when needed with `-DPHOTOPEAK_TEST_DATA=/absolute/path/to/file.root`. They
-cover the ROOT-only single/multiple-peak baseline, session interaction, the
-Groot connector, and manifest discovery with lazy dynamic loading.

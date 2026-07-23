@@ -12,6 +12,7 @@ PhotoPeakParameterRow::PhotoPeakParameterRow(TGCompositeFrame* parent,
                                              TGWindow* receiver)
   : fIdentifier(identifier) {
   fFrame = new TGHorizontalFrame(parent);
+  fFrame->SetCleanup(kDeepCleanup);
   auto* rowLabel = new TGLabel(fFrame, label);
   rowLabel->SetTextJustify(kTextRight);
   rowLabel->Resize(84, rowLabel->GetDefaultHeight());

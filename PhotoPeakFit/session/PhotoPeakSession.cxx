@@ -9,11 +9,10 @@
 #include <KeySymbols.h>
 #include <TCanvas.h>
 #include <TH1.h>
-#include <TLine.h>
 #include <TList.h>
-#include <TMarker.h>
 #include <TROOT.h>
 #include <TSpectrum.h>
+#include <TVirtualFitter.h>
 #include <TVirtualPad.h>
 
 #include <PhotoPeakFit/PhotoPeakControlWindow.h>
@@ -24,31 +23,36 @@
 
 namespace {
 
-constexpr UInt_t kPhotoPeakMarkerObject = 0x50500001;
-constexpr UInt_t kPhotoPeakBackgroundObject = 0x50500002;
-
 // ============== RemoveSessionObjects ==============
 // Purpose: Remove pad primitives owned by one PhotoPeak session category.
 // Inputs: Pad and object-name prefix.
 // Outputs: Deleted matching primitives.
 void RemoveSessionObjects(TVirtualPad* pad, const char* prefix) {
-  if(!pad || !pad->GetListOfPrimitives())
+  if(!pad || !pad->GetListOfPrimitives() || !prefix || !*prefix)
     return;
+  const std::string requested = prefix;
   std::vector<TObject*> remove;
   TIter next(pad->GetListOfPrimitives());
   while(TObject* object = next()) {
-    const std::string requested = prefix ? prefix : "";
-    const bool special = requested == "PhotoPeakSession_" ?
-      object->GetUniqueID() == kPhotoPeakMarkerObject :
-      requested == "PhotoPeakSession_background" ?
-        object->GetUniqueID() == kPhotoPeakBackgroundObject : false;
-    if(special || std::string(object->GetName()).find(requested) == 0)
+    if(std::string(object->GetName()).find(requested) == 0)
       remove.push_back(object);
   }
   for(TObject* object : remove) {
     pad->GetListOfPrimitives()->Remove(object);
     delete object;
   }
+}
+
+// ============== ReleaseSessionFitter ==============
+// Purpose: Release ROOT's retained fitter when it belongs to this session.
+// Inputs: Session histogram.
+// Outputs: Cleared global fitter without affecting unrelated ROOT fits.
+void ReleaseSessionFitter(TH1* histogram) {
+  TVirtualFitter* fitter = TVirtualFitter::GetFitter();
+  if(!fitter || fitter->GetObjectFit() != histogram)
+    return;
+  TVirtualFitter::SetFitter(nullptr);
+  delete fitter;
 }
 
 } // namespace
@@ -124,8 +128,6 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
       fDraggingPeak = added == fState.request.peaks.end() ? -1 :
         static_cast<int>(std::distance(fState.request.peaks.begin(), added));
     }
-    RefreshMarkers();
-    RefreshGui();
     return true;
   }
   if(event.type == kButton1Down) {
@@ -158,7 +160,8 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
     RefreshGui();
     return true;
   }
-  if(event.type == kButton1Motion && fDraggingPeak >= 0 &&
+  if((event.type == kButton1Motion || event.type == kButton1ShiftMotion) &&
+     fDraggingPeak >= 0 &&
      fDraggingPeak < static_cast<int>(fState.request.peaks.size())) {
     fState.request.peaks[fDraggingPeak].centroid.value = event.x;
     fPeakMoved = true;
@@ -211,9 +214,9 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
 }
 
 // ============== PhotoPeakSession::Close ==============
-// Purpose: Suspend interaction and hide UI while retaining drawing artifacts.
+// Purpose: Stop interaction and hide UI before session destruction.
 // Inputs: None.
-// Outputs: Closed idempotent session.
+// Outputs: Closed idempotent session with invalid borrowed pointers cleared.
 void PhotoPeakSession::Close() {
   if(fState.closed)
     return;
@@ -230,35 +233,28 @@ void PhotoPeakSession::Close() {
 }
 
 // ============== PhotoPeakSession::Abandon ==============
-// Purpose: End a session whose canvas or target lifecycle has ended.
+// Purpose: Release all resources owned or borrowed by one discarded session.
 // Inputs: None.
-// Outputs: Suspended state with all borrowed ROOT pointers released.
+// Outputs: Empty closed state with GUI and heavy resources scheduled for release.
 void PhotoPeakSession::Abandon() {
   Close();
+  if(fWindow) {
+    auto* window = fWindow.release();
+    window->DeleteWindow();
+  }
+  fOriginalHistogram.reset();
+  fMarkers.reset();
+  fDrawing.reset();
+  fState = PhotoPeakSessionState{};
+  fState.closed = true;
   fCanvas = nullptr;
   fPad = nullptr;
   fHistogram = nullptr;
 }
 
-// ============== PhotoPeakSession::Resume ==============
-// Purpose: Reactivate a suspended session with its prior state and artifacts.
-// Inputs: None.
-// Outputs: Active interaction, synchronized markers, and visible controls.
-void PhotoPeakSession::Resume() {
-  if(!fCanvas || !fPad || !fHistogram)
-    return;
-  fState.closed = false;
-  fDraggingRange = -1;
-  fDraggingPeak = -1;
-  fPeakMoved = false;
-  fPeakWasExisting = false;
-  RefreshMarkers();
-  RefreshGui();
-  RaiseWindow();
-}
-
 void PhotoPeakSession::ExitMode() {
-  Close();
+  Clean();
+  Abandon();
   if(fExitCallback)
     fExitCallback();
 }
@@ -278,22 +274,38 @@ void PhotoPeakSession::Fit() {
     return;
   }
   fState.request.config.Normalize(fState.request.peaks.size());
-  const auto result = PhotoPeakFitter::Fit(fHistogram, fState.request, fPad, true);
-  fState.fitAvailable = result.status == 0;
+  PhotoPeakFitter::Fit(fHistogram, fState.request, fPad, true);
   RefreshGui();
 }
 
+// ============== PhotoPeakSession::Clean ==============
+// Purpose: Remove artifacts and discard all interactive fit selections.
+// Inputs: Current session state and pad.
+// Outputs: Clean pad with fresh range and peak-selection state.
 void PhotoPeakSession::Clean() {
   if(fMarkers)
     fMarkers->Clear();
+  ReleaseSessionFitter(fHistogram);
   if(fDrawing)
     fDrawing->CleanFitObjects();
   RemoveSessionObjects(fPad, "PhotoPeakSession_background");
-  fState.fitAvailable = false;
+  fState.request.peaks.clear();
+  if(fHistogram) {
+    const int first = fHistogram->GetXaxis()->GetFirst();
+    const int last = fHistogram->GetXaxis()->GetLast();
+    fState.request.fitLow = fHistogram->GetXaxis()->GetBinLowEdge(first);
+    fState.request.fitHigh = fHistogram->GetXaxis()->GetBinUpEdge(last);
+  }
+  fRangeClicks = 0;
+  fDraggingRange = -1;
+  fDraggingPeak = -1;
+  fPeakMoved = false;
+  fPeakWasExisting = false;
   if(fPad) {
     fPad->Modified();
     fPad->Update();
   }
+  RefreshGui();
 }
 
 void PhotoPeakSession::SetRange(double low, double high) {
@@ -304,6 +316,10 @@ void PhotoPeakSession::SetRange(double low, double high) {
   RefreshMarkers();
 }
 
+// ============== PhotoPeakSession::AddPeak ==============
+// Purpose: Add one sorted peak seed and synchronize every representation.
+// Inputs: Peak centroid in histogram coordinates.
+// Outputs: Updated request, histogram marker, and control-window section.
 void PhotoPeakSession::AddPeak(double centroid) {
   PhotoPeakSeed seed;
   seed.centroid = {centroid, PhotoPeakParameterMode::Free,
@@ -326,11 +342,6 @@ void PhotoPeakSession::AddPeak(double centroid) {
     [](const PhotoPeakSeed& left, const PhotoPeakSeed& right) {
       return left.centroid.value < right.centroid.value;
     });
-}
-
-void PhotoPeakSession::RemovePeak(std::size_t index) {
-  if(index < fState.request.peaks.size())
-    fState.request.peaks.erase(fState.request.peaks.begin() + index);
   RefreshMarkers();
   RefreshGui();
 }
@@ -400,7 +411,6 @@ void PhotoPeakSession::ShowBackground() {
   if(!background)
     return;
   background->SetName("PhotoPeakSession_background");
-  background->SetUniqueID(kPhotoPeakBackgroundObject);
   background->SetDirectory(nullptr);
   background->SetLineColor(kBlue + 1);
   background->SetLineStyle(2);

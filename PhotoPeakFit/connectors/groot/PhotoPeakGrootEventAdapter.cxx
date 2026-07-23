@@ -47,6 +47,7 @@ PhotoPeakGrootEventAdapter::PhotoPeakGrootEventAdapter(
     fHistogram(histogram),
     fSession(std::make_unique<PhotoPeakSession>(canvas, pad, histogram)) {
   fSession->SetExitCallback([this]() {
+    fHistogram = nullptr;
     if(fHost)
       fHost->DeactivateSession(this);
   });
@@ -76,11 +77,8 @@ void PhotoPeakGrootEventAdapter::ObserveEvent(const GPluginEvent& event) {
   PhotoPeakInputEvent input;
   input.type = event.type;
   input.code = event.code;
-  input.state = event.state;
   input.px = event.px;
-  input.py = event.py;
   input.x = event.x;
-  input.y = event.y;
   fSession->HandleEvent(input);
 }
 
@@ -90,22 +88,13 @@ void PhotoPeakGrootEventAdapter::Close() {
   fHistogram = nullptr;
 }
 
-// ============== PhotoPeakGrootEventAdapter::Suspend ==============
-// Purpose: Exercise the user Exit-mode path while retaining session state.
+// ============== PhotoPeakGrootEventAdapter::ExitMode ==============
+// Purpose: Exercise the user Exit-mode path with complete session discard.
 // Inputs: None.
-// Outputs: Inactive resumable session and host deactivation callback.
-void PhotoPeakGrootEventAdapter::Suspend() {
+// Outputs: Inactive abandoned session and host deactivation callback.
+void PhotoPeakGrootEventAdapter::ExitMode() {
   if(fSession)
     fSession->ExitMode();
-}
-
-// ============== PhotoPeakGrootEventAdapter::Resume ==============
-// Purpose: Reactivate the retained PhotoPeak session state and controls.
-// Inputs: None.
-// Outputs: Active common session.
-void PhotoPeakGrootEventAdapter::Resume() {
-  if(fSession)
-    fSession->Resume();
 }
 
 // ============== PhotoPeakGrootEventAdapter::CleanArtifacts ==============

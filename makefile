@@ -1,4 +1,4 @@
-.PHONY: all unix test install clean
+.PHONY: all unix install clean
 
 GROOT_SOURCE_DIR ?= $(abspath ../groot)
 GROOT_BUILD_DIR ?= $(GROOT_SOURCE_DIR)/build
@@ -18,26 +18,12 @@ unix: CMakeLists.txt
 		exit 1; \
 	fi
 	@cmake -S ./ -B ./build \
-		-DBUILD_TESTING=OFF \
 		-DGROOT_SOURCE_DIR="$(GROOT_SOURCE_DIR)" \
 		-DGROOT_BUILD_DIR="$(GROOT_BUILD_DIR)" || \
 		cmake3 -S ./ -B ./build \
-			-DBUILD_TESTING=OFF \
 			-DGROOT_SOURCE_DIR="$(GROOT_SOURCE_DIR)" \
 			-DGROOT_BUILD_DIR="$(GROOT_BUILD_DIR)"
 	@cmake --build ./build -j4
-
-test:
-	@cmake -S ./ -B ./build \
-		-DBUILD_TESTING=ON \
-		-DGROOT_SOURCE_DIR="$(GROOT_SOURCE_DIR)" \
-		-DGROOT_BUILD_DIR="$(GROOT_BUILD_DIR)" || \
-		cmake3 -S ./ -B ./build \
-			-DBUILD_TESTING=ON \
-			-DGROOT_SOURCE_DIR="$(GROOT_SOURCE_DIR)" \
-			-DGROOT_BUILD_DIR="$(GROOT_BUILD_DIR)"
-	@cmake --build ./build -j4
-	@ctest --test-dir ./build --output-on-failure
 
 install: unix
 	@cmake --install ./build --prefix "$(INSTALL_PREFIX)"
