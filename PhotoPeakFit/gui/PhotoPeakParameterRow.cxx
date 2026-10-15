@@ -1,93 +1,86 @@
 #include "PhotoPeakParameterRow.h"
+#include "PhotoPeakEntry.h"
 
-#include <algorithm>
-
-#include <TGButton.h>
+#include <TGComboBox.h>
 #include <TGLabel.h>
-#include <TGNumberEntry.h>
 
+// ============== PhotoPeakParameterRow::PhotoPeakParameterRow ==============
+// Purpose: Build a value/mode row with expandable limits.
+// Inputs: Parent, label, ID range, receiver. Outputs: Parent-owned widgets.
 PhotoPeakParameterRow::PhotoPeakParameterRow(TGCompositeFrame* parent,
-                                             const char* label,
-                                             int identifier,
-                                             TGWindow* receiver)
-  : fIdentifier(identifier) {
-  fFrame = new TGHorizontalFrame(parent);
-  fFrame->SetCleanup(kDeepCleanup);
-  auto* rowLabel = new TGLabel(fFrame, label);
-  rowLabel->SetTextJustify(kTextRight);
-  rowLabel->Resize(84, rowLabel->GetDefaultHeight());
-  fFrame->AddFrame(rowLabel,
-                   new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 2, 6, 2, 2));
-  fValue = new TGNumberEntry(fFrame, 0.0, 9, identifier);
-  fValue->Resize(128, fValue->GetDefaultHeight());
-  fFrame->AddFrame(fValue, new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
-  fFixed = new TGCheckButton(fFrame, "fix", identifier + 1);
-  fLimited = new TGCheckButton(fFrame, "limits", identifier + 2);
-  fFixed->Resize(58, fFixed->GetDefaultHeight());
-  fLimited->Resize(78, fLimited->GetDefaultHeight());
-  fFixed->Associate(receiver);
-  fLimited->Associate(receiver);
-  fFrame->AddFrame(fFixed, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
-  fFrame->AddFrame(fLimited, new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
-  fLower = new TGNumberEntry(fFrame, 0.0, 9, identifier + 3);
-  fUpper = new TGNumberEntry(fFrame, 0.0, 9, identifier + 4);
-  fLower->Resize(120, fLower->GetDefaultHeight());
-  fUpper->Resize(120, fUpper->GetDefaultHeight());
-  fFrame->AddFrame(fLower, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
-  fFrame->AddFrame(fUpper, new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
+  const char* label, int identifier, TGWindow* receiver) : fLabel(label) {
+  fFrame = new TGVerticalFrame(parent);
+  auto* main = new TGHorizontalFrame(fFrame);
+  auto* name = new TGLabel(main, label);
+  name->SetTextJustify(kTextLeft);
+  name->ChangeOptions(name->GetOptions() | kFixedWidth);
+  name->Resize(70, name->GetDefaultHeight());
+  main->AddFrame(name, new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 2, 6, 3, 3));
+  fValue = new PhotoPeakEntry(main, identifier, receiver);
+  main->AddFrame(fValue, new TGLayoutHints(kLHintsExpandX, 2, 6, 3, 3));
+  fMode = new TGComboBox(main, identifier + 1);
+  fMode->AddEntry("Free", 0);
+  fMode->AddEntry("Fixed", 1);
+  fMode->AddEntry("Limited", 2);
+  fMode->Resize(90, 24);
+  fMode->Associate(receiver);
+  main->AddFrame(fMode, new TGLayoutHints(kLHintsRight, 2, 2, 3, 3));
+  fFrame->AddFrame(main, new TGLayoutHints(kLHintsExpandX));
+  fLimits = new TGHorizontalFrame(fFrame);
+  fLimits->AddFrame(new TGLabel(fLimits, "Lower"),
+    new TGLayoutHints(kLHintsCenterY, 12, 4, 2, 2));
+  fLower = new PhotoPeakEntry(fLimits, identifier + 2, receiver);
+  fLimits->AddFrame(fLower, new TGLayoutHints(kLHintsExpandX, 2, 6, 2, 2));
+  fLimits->AddFrame(new TGLabel(fLimits, "Upper"),
+    new TGLayoutHints(kLHintsCenterY, 2, 4, 2, 2));
+  fUpper = new PhotoPeakEntry(fLimits, identifier + 3, receiver);
+  fLimits->AddFrame(fUpper, new TGLayoutHints(kLHintsExpandX, 2, 2, 2, 2));
+  fFrame->AddFrame(fLimits, new TGLayoutHints(kLHintsExpandX));
   parent->AddFrame(fFrame, new TGLayoutHints(kLHintsExpandX));
+  Set(PhotoPeakParameterControl{});
 }
 
+// ============== PhotoPeakParameterRow::Set ==============
+// Purpose: Show stored settings. Inputs: Control. Outputs: Value, mode and limits.
 void PhotoPeakParameterRow::Set(const PhotoPeakParameterControl& control) {
   fValue->SetNumber(control.value);
-  fFixed->SetState(control.mode == PhotoPeakParameterMode::Fixed ?
-                   kButtonDown : kButtonUp, false);
-  fLimited->SetState(control.mode == PhotoPeakParameterMode::Limited ?
-                     kButtonDown : kButtonUp, false);
   fLower->SetNumber(control.lower);
   fUpper->SetNumber(control.upper);
-  Normalize();
+  fMode->Select(static_cast<int>(control.mode), false);
+  Update();
 }
 
-PhotoPeakParameterControl PhotoPeakParameterRow::Get() {
-  Normalize();
-  PhotoPeakParameterControl control;
-  control.value = fValue->GetNumber();
-  control.lower = fLower->GetNumber();
-  control.upper = fUpper->GetNumber();
-  if(control.lower > control.upper)
-    std::swap(control.lower, control.upper);
-  if(fFixed->IsOn())
-    control.mode = PhotoPeakParameterMode::Fixed;
-  else if(fLimited->IsOn())
-    control.mode = PhotoPeakParameterMode::Limited;
-  return control;
+// ============== PhotoPeakParameterRow::Get ==============
+// Purpose: Read edits without silent correction. Inputs: Widgets. Outputs: Control or error.
+bool PhotoPeakParameterRow::Get(PhotoPeakParameterControl& control,
+  std::string& error) const {
+  control.mode = static_cast<PhotoPeakParameterMode>(fMode->GetSelected());
+  if(!fValue->Read(control.value, fLabel.c_str(), error))
+    return false;
+  if(control.mode != PhotoPeakParameterMode::Limited)
+    return true;
+  return fLower->Read(control.lower, (fLabel + " lower").c_str(), error) &&
+    fUpper->Read(control.upper, (fLabel + " upper").c_str(), error);
 }
 
-void PhotoPeakParameterRow::Normalize() {
-  if(fFixed->IsOn() && fLimited->IsOn())
-    fLimited->SetState(kButtonUp, false);
-  const bool limits = fLimited->IsOn() && !fFixed->IsOn();
-  fLower->SetState(limits);
-  fUpper->SetState(limits);
-}
-
-void PhotoPeakParameterRow::HandleToggle(int identifier) {
-  if(identifier == fIdentifier + 1 && fFixed->IsOn())
-    fLimited->SetState(kButtonUp, false);
-  if(identifier == fIdentifier + 2 && fLimited->IsOn())
-    fFixed->SetState(kButtonUp, false);
-  Normalize();
-}
-
+// ============== PhotoPeakParameterRow::SetEnabled ==============
+// Purpose: Retain inactive settings. Inputs: Enabled flag. Outputs: Widget states.
 void PhotoPeakParameterRow::SetEnabled(bool enabled) {
-  fValue->SetState(enabled);
-  fFixed->SetEnabled(enabled);
-  fLimited->SetEnabled(enabled);
-  if(!enabled) {
-    fLower->SetState(false);
-    fUpper->SetState(false);
-  } else {
-    Normalize();
-  }
+  fEnabled = enabled;
+  fValue->SetEnabled(enabled);
+  fMode->SetEnabled(enabled);
+  Update();
+}
+
+// ============== PhotoPeakParameterRow::Update ==============
+// Purpose: Expose Limited bounds. Inputs: Mode. Outputs: Visible limits and layout.
+void PhotoPeakParameterRow::Update() {
+  const bool limited = fMode->GetSelected() == 2;
+  if(limited)
+    fFrame->ShowFrame(fLimits);
+  else
+    fFrame->HideFrame(fLimits);
+  fLower->SetEnabled(fEnabled && limited);
+  fUpper->SetEnabled(fEnabled && limited);
+  fFrame->Layout();
 }

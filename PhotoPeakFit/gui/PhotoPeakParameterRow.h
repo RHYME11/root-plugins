@@ -1,33 +1,34 @@
-#ifndef __PHOTOPEAKPARAMETERROW_H__
-#define __PHOTOPEAKPARAMETERROW_H__
+#ifndef PHOTOPEAK_PARAMETER_ROW_H
+#define PHOTOPEAK_PARAMETER_ROW_H
 
+#include <string>
 #include <PhotoPeakFit/PhotoPeakFitConfig.h>
 
+class PhotoPeakEntry;
 class TGCompositeFrame;
+class TGVerticalFrame;
 class TGHorizontalFrame;
-class TGNumberEntry;
-class TGCheckButton;
+class TGComboBox;
 class TGWindow;
 
 class PhotoPeakParameterRow {
-  public:
-    PhotoPeakParameterRow(TGCompositeFrame* parent, const char* label,
-                          int identifier, TGWindow* receiver);
-    void Set(const PhotoPeakParameterControl& control);
-    PhotoPeakParameterControl Get();
-    void HandleToggle(int identifier);
-    void SetEnabled(bool enabled);
+public:
+  PhotoPeakParameterRow(TGCompositeFrame* parent, const char* label,
+                        int identifier, TGWindow* receiver);
+  void Set(const PhotoPeakParameterControl& control);
+  bool Get(PhotoPeakParameterControl& control, std::string& error) const;
+  void SetEnabled(bool enabled);
+  void Update();
 
-  private:
-    void Normalize();
-
-    TGHorizontalFrame* fFrame;
-    TGNumberEntry* fValue;
-    TGCheckButton* fFixed;
-    TGCheckButton* fLimited;
-    TGNumberEntry* fLower;
-    TGNumberEntry* fUpper;
-    int fIdentifier;
+private:
+  std::string fLabel;
+  TGVerticalFrame* fFrame;
+  TGHorizontalFrame* fLimits;
+  PhotoPeakEntry* fValue;
+  PhotoPeakEntry* fLower;
+  PhotoPeakEntry* fUpper;
+  TGComboBox* fMode;
+  bool fEnabled = true;
 };
 
 #endif

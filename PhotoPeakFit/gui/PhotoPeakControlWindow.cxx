@@ -11,7 +11,14 @@
 #include <TGComboBox.h>
 #include <TGLabel.h>
 #include <TGMenu.h>
-#include <TGNumberEntry.h>
+#include <TGListBox.h>
+#include <TGTab.h>
+#include <TGTextView.h>
+#include <TH1.h>
+#include <TCanvas.h>
+#include <TVirtualPad.h>
+#include <cmath>
+#include <iomanip>
 #include <TGTextEntry.h>
 #include <TString.h>
 #include <TVirtualX.h>
@@ -19,12 +26,13 @@
 #include <PhotoPeakFit/PhotoPeakSession.h>
 
 #include "PhotoPeakParameterRow.h"
+#include "PhotoPeakEntry.h"
 
 namespace {
 enum ControlId {
   kFit = 100,
   kClean,
-  kExit,
+  kExitMode,
   kAddPeak,
   kApply,
   kMode,
@@ -32,8 +40,17 @@ enum ControlId {
   kBackgroundOptions,
   kRelativePosition,
   kRelativeFwhm,
-  kPreviousPeakPage = 200,
-  kNextPeakPage,
+  kPeakList = 110,
+  kPickPeaks,
+  kSetRange,
+  kBrowse,
+  kDeletePeak,
+  kRebin = 120,
+  kUndoRebin,
+  kPanLeft,
+  kPanRight,
+  kUnzoom,
+  kPreview,
   kBackDecreasingWindow = 500,
   kBackIncreasingWindow,
   kBackOrder2,
@@ -50,10 +67,6 @@ enum ControlId {
   kBackSmoothing15,
   kBackCompton
 };
-
-constexpr std::size_t kPeakRowsPerPage = 3;
-constexpr UInt_t kPeakViewportHeight = 360;
-constexpr Long_t kDeletePeakBase = 2000;
 
 struct BackgroundOption {
   int id;
@@ -142,480 +155,452 @@ void ToggleBackgroundOption(TGPopupMenu* menu, int identifier) {
 }
 
 class PhotoPeakControlWindow::Impl {
-  public:
-    struct PeakRows {
-      TGGroupFrame* group;
-      PhotoPeakParameterRow* centroid;
-      PhotoPeakParameterRow* height;
-      PhotoPeakParameterRow* fwhm;
-    };
-
-    PhotoPeakSession* session = nullptr;
-    TGNumberEntry* rangeLow = nullptr;
-    TGNumberEntry* rangeHigh = nullptr;
-    TGCanvas* peakCanvas = nullptr;
-    TGVerticalFrame* peakContainer = nullptr;
-    TGLabel* peakPageLabel = nullptr;
-    TGTextButton* previousPeakPage = nullptr;
-    TGTextButton* nextPeakPage = nullptr;
-    TGComboBox* mode = nullptr;
-    TGTextEntry* rootOptions = nullptr;
-    TGComboBox* background = nullptr;
-    TGNumberEntry* backgroundIterations = nullptr;
-    TGTextButton* backgroundOptions = nullptr;
-    std::unique_ptr<TGPopupMenu> backgroundOptionMenu;
-    TGNumberEntry* backgroundLow = nullptr;
-    TGNumberEntry* backgroundHigh = nullptr;
-    TGCheckButton* relativePosition = nullptr;
-    TGCheckButton* relativeFwhm = nullptr;
-    std::vector<PeakRows> peaks;
-    std::vector<double> previousCentroids;
-    std::size_t peakPage = 0;
-    bool subwindowsMapped = false;
-    std::array<PhotoPeakParameterRow*, 7> globals{};
+public:
+  PhotoPeakSession* session = nullptr;
+  TGLabel* target = nullptr;
+  TGLabel* status = nullptr;
+  TGLabel* selected = nullptr;
+  TGLabel* activeParameters = nullptr;
+  TGLabel* resultStatus = nullptr;
+  TGListBox* peakList = nullptr;
+  TGTab* tabs = nullptr;
+  PhotoPeakEntry* rangeLow = nullptr;
+  PhotoPeakEntry* rangeHigh = nullptr;
+  PhotoPeakEntry* backgroundIterations = nullptr;
+  PhotoPeakEntry* backgroundLow = nullptr;
+  PhotoPeakEntry* backgroundHigh = nullptr;
+  TGTextEntry* rootOptions = nullptr;
+  TGComboBox* mode = nullptr;
+  TGComboBox* background = nullptr;
+  TGCheckButton* relativePosition = nullptr;
+  TGCheckButton* relativeFwhm = nullptr;
+  TGTextButton* backgroundOptions = nullptr;
+  std::unique_ptr<TGPopupMenu> backgroundOptionMenu;
+  std::array<std::unique_ptr<PhotoPeakParameterRow>, 3> peakRows;
+  std::array<std::unique_ptr<PhotoPeakParameterRow>, 7> globals;
+  std::array<TGTextButton*, 3> tools{};
+  TGTextView* results = nullptr;
+  std::uint64_t editedPeak = 0;
+  bool dirty = false;
+  bool refreshing = false;
+  bool committing = false;
+  int activeTab = 0;
 };
 
+// ============== PhotoPeakControlWindow::PhotoPeakControlWindow ==============
+// Purpose: Build an English ROOT-native control panel linked to the existing canvas.
+// Inputs: Owning session. Outputs: Four configuration pages and persistent actions.
 PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
-  : TGMainFrame(gClient->GetRoot(), 650, 720), fImpl(std::make_unique<Impl>()) {
+  : TGMainFrame(gClient->GetRoot(), 480, 700), fImpl(std::make_unique<Impl>()) {
   fImpl->session = session;
-  SetWindowName("fit mode");
+  SetWindowName("PhotoPeakFit - Controls");
   SetCleanup(kDeepCleanup);
-
+  auto addButton = [&](TGCompositeFrame* parent, const char* text, int id) {
+    auto* button = new TGTextButton(parent, text, id);
+    button->Associate(this);
+    parent->AddFrame(button, new TGLayoutHints(kLHintsLeft, 3, 3, 3, 3));
+    return button;
+  };
+  auto addEntry = [&](TGCompositeFrame* parent, const char* label, int id) {
+    auto* row = new TGHorizontalFrame(parent);
+    row->AddFrame(new TGLabel(row, label), new TGLayoutHints(kLHintsCenterY, 4, 6, 3, 3));
+    auto* entry = new PhotoPeakEntry(row, id, this);
+    row->AddFrame(entry, new TGLayoutHints(kLHintsExpandX, 3, 3, 3, 3));
+    parent->AddFrame(row, new TGLayoutHints(kLHintsExpandX));
+    return entry;
+  };
+  fImpl->target = new TGLabel(this, "Target");
+  fImpl->target->SetTextJustify(kTextLeft);
+  fImpl->target->SetWrapLength(450);
+  AddFrame(fImpl->target, new TGLayoutHints(kLHintsExpandX, 8, 8, 6, 2));
+  auto* tools = new TGHorizontalFrame(this);
+  fImpl->tools[0] = addButton(tools, "Pick peaks", kPickPeaks);
+  fImpl->tools[1] = addButton(tools, "Set range", kSetRange);
+  fImpl->tools[2] = addButton(tools, "Browse", kBrowse);
+  AddFrame(tools, new TGLayoutHints(kLHintsExpandX, 5, 5));
   auto* range = new TGHorizontalFrame(this);
-  range->AddFrame(new TGLabel(range, "fit range"),
-                  new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 4, 8, 4, 4));
-  fImpl->rangeLow = new TGNumberEntry(range, 0.0, 12);
-  fImpl->rangeHigh = new TGNumberEntry(range, 0.0, 12);
-  range->AddFrame(fImpl->rangeLow, new TGLayoutHints(kLHintsLeft, 2, 4, 4, 4));
-  range->AddFrame(fImpl->rangeHigh, new TGLayoutHints(kLHintsLeft, 2, 4, 4, 4));
-  auto* apply = new TGTextButton(range, "Apply", kApply);
-  apply->Associate(this);
-  range->AddFrame(apply, new TGLayoutHints(kLHintsLeft, 6, 2, 4, 4));
-  AddFrame(range, new TGLayoutHints(kLHintsExpandX));
+  range->AddFrame(new TGLabel(range, "Fit low"), new TGLayoutHints(kLHintsCenterY, 4, 4, 4, 4));
+  fImpl->rangeLow = new PhotoPeakEntry(range, 10, this);
+  range->AddFrame(fImpl->rangeLow, new TGLayoutHints(kLHintsExpandX, 2, 6, 4, 4));
+  range->AddFrame(new TGLabel(range, "High"), new TGLayoutHints(kLHintsCenterY, 4, 4, 4, 4));
+  fImpl->rangeHigh = new PhotoPeakEntry(range, 11, this);
+  range->AddFrame(fImpl->rangeHigh, new TGLayoutHints(kLHintsExpandX, 2, 6, 4, 4));
+  addButton(range, "Apply", kApply);
+  AddFrame(range, new TGLayoutHints(kLHintsExpandX, 5, 5));
 
-  fImpl->peakCanvas = new TGCanvas(this, 625, kPeakViewportHeight);
-  fImpl->peakContainer = new TGVerticalFrame(fImpl->peakCanvas->GetViewPort());
-  fImpl->peakContainer->SetCleanup(kDeepCleanup);
-  fImpl->peakCanvas->SetContainer(fImpl->peakContainer);
-  fImpl->peakCanvas->SetScrolling(TGCanvas::kCanvasNoScroll);
-  AddFrame(fImpl->peakCanvas,
-           new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 4, 4, 2, 2));
-
-  auto* peakPages = new TGHorizontalFrame(this);
-  fImpl->previousPeakPage = new TGTextButton(
-    peakPages, "Previous", kPreviousPeakPage);
-  fImpl->nextPeakPage = new TGTextButton(
-    peakPages, "Next", kNextPeakPage);
-  fImpl->peakPageLabel = new TGLabel(peakPages, "no initial peaks");
-  fImpl->previousPeakPage->Associate(this);
-  fImpl->nextPeakPage->Associate(this);
-  peakPages->AddFrame(fImpl->previousPeakPage,
-    new TGLayoutHints(kLHintsLeft, 4, 4, 2, 2));
-  peakPages->AddFrame(fImpl->peakPageLabel,
-    new TGLayoutHints(kLHintsCenterX | kLHintsCenterY, 8, 8, 2, 2));
-  peakPages->AddFrame(fImpl->nextPeakPage,
-    new TGLayoutHints(kLHintsRight, 4, 4, 2, 2));
-  AddFrame(peakPages, new TGLayoutHints(kLHintsExpandX));
-
-  auto* addPeak = new TGTextButton(this, "Add peak", kAddPeak);
-  addPeak->Associate(this);
-  AddFrame(addPeak, new TGLayoutHints(kLHintsLeft, 4, 2, 2, 4));
-
-  auto* options = new TGHorizontalFrame(this);
-  options->AddFrame(new TGLabel(options, "mode"),
-                    new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 4, 4, 2, 2));
-  fImpl->mode = new TGComboBox(options, kMode);
-  fImpl->mode->AddEntry("auto", 0);
-  fImpl->mode->AddEntry("highstat", 1);
-  fImpl->mode->AddEntry("lowstat", 2);
+  fImpl->tabs = new TGTab(this, 460, 490);
+  fImpl->tabs->Associate(this);
+  auto* peaks = fImpl->tabs->AddTab("Peaks");
+  auto* actions = new TGHorizontalFrame(peaks);
+  addButton(actions, "+ Add peak", kAddPeak);
+  addButton(actions, "Delete selected", kDeletePeak);
+  peaks->AddFrame(actions, new TGLayoutHints(kLHintsExpandX, 3, 3, 4, 2));
+  fImpl->peakList = new TGListBox(peaks, kPeakList);
+  fImpl->peakList->Associate(this);
+  fImpl->peakList->Resize(440, 110);
+  peaks->AddFrame(fImpl->peakList, new TGLayoutHints(kLHintsExpandX, 6, 6, 2, 6));
+  fImpl->selected = new TGLabel(peaks, "No peak selected");
+  peaks->AddFrame(fImpl->selected, new TGLayoutHints(kLHintsLeft, 8, 4, 2, 4));
+  const char* peakNames[] = {"Centroid", "Height", "FWHM"};
+  for(int index = 0; index < 3; ++index)
+    fImpl->peakRows[index] = std::make_unique<PhotoPeakParameterRow>(peaks, peakNames[index], 1000 + index * 10, this);
+  auto* settings = new TGHorizontalFrame(peaks);
+  settings->AddFrame(new TGLabel(settings, "Fit mode"), new TGLayoutHints(kLHintsCenterY, 6, 6, 4, 4));
+  fImpl->mode = new TGComboBox(settings, kMode);
+  fImpl->mode->AddEntry("Auto", 0);
+  fImpl->mode->AddEntry("HighStat", 1);
+  fImpl->mode->AddEntry("LowStat", 2);
+  fImpl->mode->Resize(120, 24);
   fImpl->mode->Associate(this);
-  fImpl->mode->Resize(120, 26);
-  fImpl->mode->GetListBox()->Resize(120, 78);
-  options->AddFrame(fImpl->mode, new TGLayoutHints(kLHintsLeft, 2, 8, 2, 2));
-  fImpl->relativePosition = new TGCheckButton(options, "relativePosition",
-                                               kRelativePosition);
-  fImpl->relativeFwhm = new TGCheckButton(options, "relativeFwhm",
-                                           kRelativeFwhm);
-  fImpl->relativePosition->Associate(this);
-  fImpl->relativeFwhm->Associate(this);
-  options->AddFrame(fImpl->relativePosition,
-                    new TGLayoutHints(kLHintsLeft, 4, 4, 2, 2));
-  options->AddFrame(fImpl->relativeFwhm,
-                    new TGLayoutHints(kLHintsLeft, 4, 4, 2, 2));
-  AddFrame(options, new TGLayoutHints(kLHintsExpandX));
+  settings->AddFrame(fImpl->mode, new TGLayoutHints(kLHintsLeft, 2, 4, 4, 4));
+  peaks->AddFrame(settings, new TGLayoutHints(kLHintsExpandX));
+  fImpl->relativePosition = new TGCheckButton(peaks, "Relative position", kRelativePosition);
+  fImpl->relativeFwhm = new TGCheckButton(peaks, "Relative FWHM", kRelativeFwhm);
+  for(auto* button : {fImpl->relativePosition, fImpl->relativeFwhm}) {
+    button->Associate(this);
+    peaks->AddFrame(button, new TGLayoutHints(kLHintsLeft, 6, 4, 3, 3));
+  }
 
-  auto* fitOptions = new TGHorizontalFrame(this);
-  fitOptions->AddFrame(new TGLabel(fitOptions, "ROOT options"),
-    new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 4, 4, 2, 2));
-  fImpl->rootOptions = new TGTextEntry(fitOptions, "RQSN");
-  fitOptions->AddFrame(fImpl->rootOptions,
-    new TGLayoutHints(kLHintsExpandX, 2, 4, 2, 2));
-  AddFrame(fitOptions, new TGLayoutHints(kLHintsExpandX));
+  auto* shape = fImpl->tabs->AddTab("Shape");
+  auto* shapeLabel = new TGLabel(shape, "Global parameters: Value / Mode");
+  shape->AddFrame(shapeLabel, new TGLayoutHints(kLHintsLeft, 6, 4, 5, 4));
+  const char* globalNames[] = {"R", "BETA", "STEP", "A", "B", "C", "WSCALE"};
+  for(int index = 0; index < 7; ++index)
+    fImpl->globals[index] = std::make_unique<PhotoPeakParameterRow>(shape, globalNames[index], 300 + index * 10, this);
+  fImpl->activeParameters = new TGLabel(shape, "");
+  fImpl->activeParameters->SetWrapLength(440);
+  fImpl->activeParameters->SetTextJustify(kTextLeft);
+  shape->AddFrame(fImpl->activeParameters, new TGLayoutHints(kLHintsExpandX, 6, 6, 4, 4));
+  auto* advanced = new TGGroupFrame(shape, "Advanced ROOT options");
+  fImpl->rootOptions = new PhotoPeakEntry(advanced, 16, this);
+  advanced->AddFrame(fImpl->rootOptions, new TGLayoutHints(kLHintsExpandX, 4, 4, 4, 4));
+  shape->AddFrame(advanced, new TGLayoutHints(kLHintsExpandX, 6, 6, 4, 6));
 
-  auto* backgroundGroup = new TGVerticalFrame(this);
-  auto* background = new TGHorizontalFrame(backgroundGroup);
-  background->AddFrame(new TGLabel(background, "background"),
-    new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 4, 4, 2, 2));
+  auto* background = fImpl->tabs->AddTab("Background");
+  background->AddFrame(new TGLabel(background, "TSpectrum preview (separate from fit background)"),
+    new TGLayoutHints(kLHintsLeft, 6, 4, 6, 4));
   fImpl->background = new TGComboBox(background, kBackground);
-  fImpl->background->AddEntry("none", 0);
-  fImpl->background->AddEntry("local", 1);
-  fImpl->background->AddEntry("global", 2);
+  fImpl->background->AddEntry("None", 0);
+  fImpl->background->AddEntry("Local range", 1);
+  fImpl->background->AddEntry("Global (full spectrum)", 2);
+  fImpl->background->Resize(240, 26);
   fImpl->background->Associate(this);
-  fImpl->background->Resize(120, 26);
-  fImpl->background->GetListBox()->Resize(120, 78);
-  background->AddFrame(fImpl->background,
-    new TGLayoutHints(kLHintsLeft, 2, 6, 2, 2));
-  background->AddFrame(new TGLabel(background, "iterations"),
-    new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 2, 2, 2, 2));
-  fImpl->backgroundIterations = new TGNumberEntry(background, 20, 5);
-  background->AddFrame(fImpl->backgroundIterations,
-    new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
-  fImpl->backgroundOptions = new TGTextButton(
-    background, "options (3)  \342\226\276", kBackgroundOptions);
-  fImpl->backgroundOptions->Associate(this);
-  background->AddFrame(fImpl->backgroundOptions,
-    new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
-  backgroundGroup->AddFrame(background, new TGLayoutHints(kLHintsExpandX));
-
-  auto* localRange = new TGHorizontalFrame(backgroundGroup);
-  localRange->AddFrame(new TGLabel(localRange, "local range"),
-    new TGLayoutHints(kLHintsLeft | kLHintsCenterY, 2, 2, 2, 2));
-  fImpl->backgroundLow = new TGNumberEntry(localRange, 0.0, 9);
-  fImpl->backgroundHigh = new TGNumberEntry(localRange, 0.0, 9);
-  localRange->AddFrame(fImpl->backgroundLow,
-    new TGLayoutHints(kLHintsLeft, 2, 2, 2, 2));
-  localRange->AddFrame(fImpl->backgroundHigh,
-    new TGLayoutHints(kLHintsLeft, 2, 4, 2, 2));
-  backgroundGroup->AddFrame(localRange, new TGLayoutHints(kLHintsExpandX));
-  AddFrame(backgroundGroup, new TGLayoutHints(kLHintsExpandX));
-
+  background->AddFrame(fImpl->background, new TGLayoutHints(kLHintsLeft, 6, 6, 4, 4));
+  fImpl->backgroundIterations = addEntry(background, "Iterations", 12);
+  fImpl->backgroundLow = addEntry(background, "Local low", 13);
+  fImpl->backgroundHigh = addEntry(background, "Local high", 14);
+  fImpl->backgroundOptions = addButton(background, "Options", kBackgroundOptions);
   fImpl->backgroundOptionMenu = std::make_unique<TGPopupMenu>(gClient->GetRoot());
   for(const auto& option : kBackgroundOptionList)
     fImpl->backgroundOptionMenu->AddEntry(option.token, option.id);
   fImpl->backgroundOptionMenu->Associate(this);
-  SetBackgroundOptions(fImpl->backgroundOptionMenu.get(),
-    "BackDecreasingWindow BackOrder2 nosmoothing");
+  addButton(background, "Preview / clear (b)", kPreview);
+  auto* note = new TGLabel(background,
+    "None clears the preview. Local uses the specified range.\nGlobal estimates the entire spectrum. A/B/C in Shape\ncontrol the background used by the fit model.");
+  note->SetTextJustify(kTextLeft);
+  background->AddFrame(note, new TGLayoutHints(kLHintsLeft, 6, 6, 8, 4));
 
-  auto* globalFrame = new TGVerticalFrame(this);
-  const char* names[7] = {"R", "BETA", "STEP", "A", "B", "C", "WSCALE"};
-  for(int index = 0; index < 7; ++index)
-    fImpl->globals[index] = new PhotoPeakParameterRow(
-      globalFrame, names[index], 300 + index * 10, this);
-  AddFrame(globalFrame, new TGLayoutHints(kLHintsExpandX, 4, 4, 2, 2));
+  auto* results = fImpl->tabs->AddTab("Results");
+  fImpl->resultStatus = new TGLabel(results, "Not fitted");
+  fImpl->resultStatus->SetTextJustify(kTextLeft);
+  fImpl->resultStatus->SetWrapLength(440);
+  results->AddFrame(fImpl->resultStatus, new TGLayoutHints(kLHintsExpandX, 6, 6, 5, 5));
+  fImpl->results = new TGTextView(results, 440, 380);
+  results->AddFrame(fImpl->results, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 2, 6));
+  AddFrame(fImpl->tabs, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 4, 4));
 
+  auto* view = new TGHorizontalFrame(this);
+  addButton(view, "Rebin (w)", kRebin);
+  addButton(view, "Undo (q)", kUndoRebin);
+  addButton(view, "<", kPanLeft)->SetToolTipText("Pan left (left arrow)");
+  addButton(view, ">", kPanRight)->SetToolTipText("Pan right (right arrow)");
+  addButton(view, "Unzoom (o)", kUnzoom);
+  AddFrame(view, new TGLayoutHints(kLHintsExpandX, 5, 5));
+  fImpl->status = new TGLabel(this, "");
+  fImpl->status->SetWrapLength(450);
+  fImpl->status->SetTextJustify(kTextLeft);
+  AddFrame(fImpl->status, new TGLayoutHints(kLHintsExpandX, 8, 8, 5, 5));
   auto* buttons = new TGHorizontalFrame(this);
-  for(const auto& item : std::vector<std::pair<const char*, int>>{
-        {"Fit", kFit}, {"Clean", kClean}, {"Exit mode", kExit}}) {
-    auto* button = new TGTextButton(buttons, item.first, item.second);
-    button->Associate(this);
-    buttons->AddFrame(button, new TGLayoutHints(kLHintsLeft, 4, 4, 6, 6));
-  }
-  AddFrame(buttons, new TGLayoutHints(kLHintsCenterX));
-  Refresh();
+  addButton(buttons, "Fit (f / Enter)", kFit);
+  addButton(buttons, "Clean (n)", kClean);
+  addButton(buttons, "Exit", kExitMode);
+  AddFrame(buttons, new TGLayoutHints(kLHintsCenterX, 4, 4, 3, 6));
+  Refresh(true);
 }
 
-PhotoPeakControlWindow::~PhotoPeakControlWindow() {
-  for(auto& rows : fImpl->peaks) {
-    delete rows.centroid;
-    delete rows.height;
-    delete rows.fwhm;
-  }
-  for(auto* row : fImpl->globals)
-    delete row;
-  if(fImpl->peakCanvas && fImpl->peakContainer) {
-    fImpl->peakCanvas->SetContainer(nullptr);
-    delete fImpl->peakContainer;
-    fImpl->peakContainer = nullptr;
-  }
-}
+// ============== PhotoPeakControlWindow::~PhotoPeakControlWindow ==============
+// Purpose: Destroy row adapters before ROOT deletes their widgets.
+// Inputs: None. Outputs: Released window-owned adapters.
+PhotoPeakControlWindow::~PhotoPeakControlWindow() = default;
 
-Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
-                                               Long_t) {
+// ============== PhotoPeakControlWindow::CommitEdits ==============
+// Purpose: Share atomic validation between fields, buttons and canvas shortcuts.
+// Inputs: Pending text and controls. Outputs: Valid committed request or retained draft.
+bool PhotoPeakControlWindow::CommitEdits() {
+  if(fImpl->refreshing || fImpl->committing)
+    return true;
   if(!fImpl->session || !fImpl->session->ValidateTarget())
-    return kTRUE;
-  if(GET_MSG(message) != kC_COMMAND)
-    return TGMainFrame::ProcessMessage(message, parameter1, 0);
-  auto readRequest = [&]() {
-    PhotoPeakFitRequest request = fImpl->session->State().request;
-    request.fitLow = fImpl->rangeLow->GetNumber();
-    request.fitHigh = fImpl->rangeHigh->GetNumber();
-    const std::size_t pageStart = fImpl->peakPage * kPeakRowsPerPage;
-    for(std::size_t slot = 0; slot < fImpl->peaks.size(); ++slot) {
-      const std::size_t peakIndex = pageStart + slot;
-      if(peakIndex >= request.peaks.size())
-        break;
-      auto& rows = fImpl->peaks[slot];
-      PhotoPeakSeed seed;
-      seed.centroid = rows.centroid->Get();
-      seed.height = rows.height->Get();
-      seed.fwhm = rows.fwhm->Get();
-      request.peaks[peakIndex] = seed;
-    }
+    return false;
+  if(!fImpl->dirty)
+    return true;
+  fImpl->committing = true;
+  auto request = fImpl->session->State().request;
+  std::string error;
+  bool valid = fImpl->rangeLow->Read(request.fitLow, "Fit low", error) &&
+    fImpl->rangeHigh->Read(request.fitHigh, "Fit high", error);
+  for(auto& peak : request.peaks) {
+    if(peak.id == fImpl->editedPeak && valid)
+      valid = fImpl->peakRows[0]->Get(peak.centroid, error) &&
+        fImpl->peakRows[1]->Get(peak.height, error) && fImpl->peakRows[2]->Get(peak.fwhm, error);
+  }
+  const int parameterMap[] = {kPhotoPeakR, kPhotoPeakBeta, kPhotoPeakStep, kPhotoPeakA, kPhotoPeakB, kPhotoPeakC};
+  for(int index = 0; index < 6 && valid; ++index)
+    valid = fImpl->globals[index]->Get(request.config.global[parameterMap[index]], error);
+  if(valid)
+    valid = fImpl->globals[6]->Get(request.config.widthScale, error);
+  double iterations = 0;
+  if(valid)
+    valid = fImpl->backgroundIterations->Read(iterations, "Background iterations", error) &&
+      fImpl->backgroundLow->Read(request.config.backgroundLow, "Local low", error) &&
+      fImpl->backgroundHigh->Read(request.config.backgroundHigh, "Local high", error);
+  if(valid && (iterations < 1 || iterations > 1000000 || std::floor(iterations) != iterations)) {
+    valid = false;
+    error = "Background iterations: enter an integer from 1 to 1000000.";
+  }
+  if(valid) {
+    request.config.backgroundIterations = static_cast<int>(iterations);
     request.config.mode = static_cast<PhotoPeakFitMode>(fImpl->mode->GetSelected());
+    request.config.background = static_cast<PhotoPeakBackgroundMode>(fImpl->background->GetSelected());
+    request.config.backgroundOptions = BackgroundOptionsFromMenu(fImpl->backgroundOptionMenu.get());
     request.config.rootOptions = fImpl->rootOptions->GetText();
-    request.config.background = static_cast<PhotoPeakBackgroundMode>(
-      fImpl->background->GetSelected());
-    request.config.backgroundIterations = static_cast<int>(
-      fImpl->backgroundIterations->GetNumber());
-    request.config.backgroundOptions = BackgroundOptionsFromMenu(
-      fImpl->backgroundOptionMenu.get());
-    request.config.backgroundLow = fImpl->backgroundLow->GetNumber();
-    request.config.backgroundHigh = fImpl->backgroundHigh->GetNumber();
     request.config.relativePosition = fImpl->relativePosition->IsOn();
     request.config.relativeFwhm = fImpl->relativeFwhm->IsOn();
-    const int parameterMap[6] = {kPhotoPeakR, kPhotoPeakBeta, kPhotoPeakStep,
-                                 kPhotoPeakA, kPhotoPeakB, kPhotoPeakC};
-    for(int index = 0; index < 6; ++index)
-      request.config.global[parameterMap[index]] = fImpl->globals[index]->Get();
-    request.config.widthScale = fImpl->globals[6]->Get();
-    return request;
-  };
-  auto pull = [&]() {
-    fImpl->session->ReplaceRequest(readRequest());
-  };
-  if(parameter1 >= kDeletePeakBase &&
-     parameter1 < kDeletePeakBase +
-       static_cast<Long_t>(kPeakRowsPerPage)) {
-    PhotoPeakFitRequest request = readRequest();
-    const std::size_t slot =
-      static_cast<std::size_t>(parameter1 - kDeletePeakBase);
-    const std::size_t peakIndex =
-      fImpl->peakPage * kPeakRowsPerPage + slot;
-    if(peakIndex < request.peaks.size()) {
-      request.peaks.erase(request.peaks.begin() + peakIndex);
-      fImpl->session->ReplaceRequest(request);
+    valid = fImpl->session->ReplaceRequest(request);
+  } else {
+    fImpl->session->SetStatus(error);
+  }
+  fImpl->committing = false;
+  if(valid)
+    fImpl->dirty = false;
+  Refresh();
+  return valid;
+}
+
+// ============== PhotoPeakControlWindow::ProcessMessage ==============
+// Purpose: Route English controls through the same session commands as canvas input.
+// Inputs: ROOT widget message and IDs. Outputs: Validated operation or inline error.
+Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1, Long_t parameter2) {
+  if(fImpl->refreshing || !fImpl->session || !fImpl->session->ValidateTarget())
+    return kTRUE;
+  if(GET_MSG(message) == kC_TEXTENTRY) {
+    if(GET_SUBMSG(message) == kTE_TEXTCHANGED) {
+      fImpl->dirty = true;
+      fImpl->session->SetStatus("Unapplied edits. Enter, Apply or a canvas action validates the input.");
+    } else if(GET_SUBMSG(message) == kTE_ENTER || GET_SUBMSG(message) == kTE_TAB) {
+      CommitEdits();
     }
+    return kTRUE;
+  }
+  if(GET_MSG(message) != kC_COMMAND)
+    return TGMainFrame::ProcessMessage(message, parameter1, parameter2);
+  if(fImpl->session->State().fitting)
+    return kTRUE;
+  if(GET_SUBMSG(message) == kCM_TAB) {
+    if(CommitEdits())
+      fImpl->activeTab = static_cast<int>(parameter1);
+    else
+      fImpl->tabs->SetTab(fImpl->activeTab, false);
+    return kTRUE;
+  }
+  if(parameter1 == kClean) { fImpl->session->Clean(); return kTRUE; }
+  if(parameter1 == kExitMode) { CloseWindow(); return kTRUE; }
+  if(parameter1 == kBrowse) { fImpl->session->SetInteraction(PhotoPeakInteraction::Browse); return kTRUE; }
+  if(parameter1 == kBackgroundOptions) {
+    Int_t x = 0, y = 0;
+    Window_t child = 0;
+    gVirtualX->TranslateCoordinates(fImpl->backgroundOptions->GetId(),
+      gClient->GetRoot()->GetId(), 0, fImpl->backgroundOptions->GetHeight(), x, y, child);
+    fImpl->backgroundOptionMenu->PlaceMenu(x, y, false, true);
+    return kTRUE;
+  }
+  if(GET_SUBMSG(message) == kCM_COMBOBOX || GET_SUBMSG(message) == kCM_CHECKBUTTON ||
+     (parameter1 >= kBackDecreasingWindow && parameter1 <= kBackCompton)) {
+    if(parameter1 >= kBackDecreasingWindow && parameter1 <= kBackCompton)
+      ToggleBackgroundOption(fImpl->backgroundOptionMenu.get(), static_cast<int>(parameter1));
+    for(auto& row : fImpl->peakRows)
+      row->Update();
+    for(auto& row : fImpl->globals)
+      row->Update();
+    fImpl->dirty = true;
+  }
+  if(!CommitEdits()) {
+    if(parameter1 == kPeakList && fImpl->editedPeak)
+      fImpl->peakList->Select(static_cast<int>(fImpl->editedPeak));
     return kTRUE;
   }
   switch(parameter1) {
-    case kFit: pull(); fImpl->session->Fit(); return kTRUE;
-    case kClean: fImpl->session->Clean(); return kTRUE;
-    case kExit: fImpl->session->ExitMode(); return kTRUE;
-    case kApply: pull(); return kTRUE;
-    case kAddPeak:
-      pull();
-      fImpl->session->AddPeak(0.5 * (fImpl->rangeLow->GetNumber() +
-                                     fImpl->rangeHigh->GetNumber()));
-      return kTRUE;
-    case kPreviousPeakPage:
-      pull();
-      if(fImpl->peakPage > 0)
-        --fImpl->peakPage;
-      Refresh();
-      return kTRUE;
-    case kNextPeakPage: {
-      pull();
-      const std::size_t peakCount =
-        fImpl->session->State().request.peaks.size();
-      const std::size_t pageCount = peakCount == 0 ? 1 :
-        (peakCount + kPeakRowsPerPage - 1) / kPeakRowsPerPage;
-      if(fImpl->peakPage + 1 < pageCount)
-        ++fImpl->peakPage;
-      Refresh();
-      return kTRUE;
+    case kFit: fImpl->session->Fit(); break;
+    case kApply: break;
+    case kAddPeak: {
+      const auto& request = fImpl->session->State().request;
+      fImpl->session->AddPeak(0.5 * (request.fitLow + request.fitHigh));
+      break;
     }
-    case kBackgroundOptions: {
-      Int_t x = 0;
-      Int_t y = 0;
-      Window_t child = 0;
-      gVirtualX->TranslateCoordinates(fImpl->backgroundOptions->GetId(),
-        gClient->GetRoot()->GetId(), 0,
-        fImpl->backgroundOptions->GetHeight(), x, y, child);
-      fImpl->backgroundOptionMenu->PlaceMenu(x, y, false, true);
-      return kTRUE;
-    }
-    case kMode:
-    case kBackground:
-    case kRelativePosition:
-    case kRelativeFwhm:
-      pull();
-      return kTRUE;
-    default:
-      if(parameter1 >= kBackDecreasingWindow && parameter1 <= kBackCompton) {
-        ToggleBackgroundOption(fImpl->backgroundOptionMenu.get(),
-                               static_cast<int>(parameter1));
-        pull();
-        return kTRUE;
-      }
-      for(auto& row : fImpl->globals)
-        row->HandleToggle(static_cast<int>(parameter1));
-      const std::size_t peakCount =
-        fImpl->session->State().request.peaks.size();
-      const std::size_t pageStart = fImpl->peakPage * kPeakRowsPerPage;
-      for(std::size_t slot = 0; slot < fImpl->peaks.size(); ++slot) {
-        if(pageStart + slot >= peakCount)
-          break;
-        auto& peak = fImpl->peaks[slot];
-        peak.centroid->HandleToggle(static_cast<int>(parameter1));
-        peak.height->HandleToggle(static_cast<int>(parameter1));
-        peak.fwhm->HandleToggle(static_cast<int>(parameter1));
-      }
-      return kTRUE;
+    case kDeletePeak: fImpl->session->RemoveSelectedPeak(); break;
+    case kPeakList: fImpl->session->SelectPeak(static_cast<std::uint64_t>(parameter2)); break;
+    case kPickPeaks: fImpl->session->SetInteraction(PhotoPeakInteraction::Peaks); break;
+    case kSetRange: fImpl->session->SetInteraction(PhotoPeakInteraction::Range); break;
+    case kRebin: fImpl->session->Rebin(false); break;
+    case kUndoRebin: fImpl->session->Rebin(true); break;
+    case kPanLeft: fImpl->session->Pan(-1); break;
+    case kPanRight: fImpl->session->Pan(1); break;
+    case kUnzoom: fImpl->session->Unzoom(); break;
+    case kPreview: fImpl->session->ShowBackground(); break;
+    default: break;
   }
+  return kTRUE;
 }
 
+// ============== PhotoPeakControlWindow::CloseWindow ==============
+// Purpose: Discard a session through the window close control.
+// Inputs: None. Outputs: Closed session and deferred ROOT window destruction.
 void PhotoPeakControlWindow::CloseWindow() {
-  if(fImpl->session)
+  if(fImpl->session && !fImpl->session->State().fitting)
     fImpl->session->ExitMode();
 }
 
-void PhotoPeakControlWindow::Refresh() {
-  if(!fImpl->session)
+// ============== PhotoPeakControlWindow::Refresh ==============
+// Purpose: Render committed state while protecting incomplete input.
+// Inputs: Optional discard flag for Clean. Outputs: English controls and result status.
+void PhotoPeakControlWindow::Refresh(bool discardEdits) {
+  if(!fImpl->session || fImpl->refreshing || fImpl->committing)
     return;
-  const auto& request = fImpl->session->State().request;
-  fImpl->rangeLow->SetNumber(request.fitLow);
-  fImpl->rangeHigh->SetNumber(request.fitHigh);
-  if(request.peaks.size() > fImpl->previousCentroids.size()) {
-    std::vector<bool> matched(fImpl->previousCentroids.size(), false);
-    for(std::size_t index = 0; index < request.peaks.size(); ++index) {
-      const double centroid = request.peaks[index].centroid.value;
-      bool found = false;
-      for(std::size_t old = 0; old < fImpl->previousCentroids.size(); ++old) {
-        if(!matched[old] && fImpl->previousCentroids[old] == centroid) {
-          matched[old] = true;
-          found = true;
-          break;
-        }
-      }
-      if(!found) {
-        fImpl->peakPage = index / kPeakRowsPerPage;
-        break;
-      }
+  if(discardEdits)
+    fImpl->dirty = false;
+  fImpl->refreshing = true;
+  const auto& state = fImpl->session->State();
+  const auto& request = state.request;
+  fImpl->status->SetText(state.status.c_str());
+  fImpl->target->SetText(TString::Format("Target: %s | Canvas: %s / %s | Rebin: x%d",
+    fImpl->session->Histogram()->GetName(), fImpl->session->Canvas()->GetName(),
+    fImpl->session->Pad()->GetName(), state.rebinFactor));
+  for(int index = 0; index < 3; ++index) {
+    const bool active = static_cast<int>(state.interaction) == index;
+    fImpl->tools[index]->SetState(active ? kButtonDown : kButtonUp, false);
+  }
+  const bool current = state.hasResult && state.resultRevision == state.revision && !fImpl->dirty;
+  fImpl->resultStatus->SetText(!state.hasResult ? "Not fitted" : !current ?
+    "Previous result: input changed or has unapplied edits. Refit required." :
+    state.result.status == 0 ? "Result matches the current input." : "Fit failed or did not converge.");
+  std::ostringstream output;
+  output << std::setprecision(10);
+  if(state.hasResult) {
+    output << "Model: " << state.result.model << "\nStatus: " << state.result.status
+      << "\nFit range: [" << state.fittedRequest.fitLow << ", " << state.fittedRequest.fitHigh << "]"
+      << "\nRebin at fit: x" << state.fittedRebinFactor
+      << "\nChi2 / NDF: " << state.result.chi2 << " / " << state.result.ndf
+      << "\nReduced chi2: " << state.result.reducedChi2 << "\n";
+    for(std::size_t index = 0; index < state.result.peaks.size(); ++index) {
+      const auto& peak = state.result.peaks[index];
+      const auto id = index < state.fittedRequest.peaks.size() ? state.fittedRequest.peaks[index].id : index + 1;
+      output << "\nPeak " << id << "\n  Centroid: " << peak.centroid << " +/- " << peak.centroidError
+        << "\n  FWHM: " << peak.fwhm << " +/- " << peak.fwhmError
+        << "\n  Height: " << peak.height << " +/- " << peak.heightError
+        << "\n  Area: " << peak.area << " +/- " << peak.areaError << "\n";
     }
-  }
-  const std::size_t pageCount = request.peaks.empty() ? 1 :
-    (request.peaks.size() + kPeakRowsPerPage - 1) / kPeakRowsPerPage;
-  fImpl->peakPage = std::min(fImpl->peakPage, pageCount - 1);
-  const std::size_t requiredRows =
-    std::min(kPeakRowsPerPage, request.peaks.size());
-  bool rowsCreated = false;
-  while(fImpl->peaks.size() < requiredRows) {
-    const std::size_t index = fImpl->peaks.size();
-    const int identifier = 1000 + static_cast<int>(40 * index);
-    auto* group = new TGGroupFrame(fImpl->peakContainer,
-      (std::string("initial peak ") + std::to_string(index + 1)).c_str());
-    group->SetCleanup(kDeepCleanup);
-    auto* content = new TGHorizontalFrame(group);
-    content->SetCleanup(kDeepCleanup);
-    auto* parameters = new TGVerticalFrame(content);
-    parameters->SetCleanup(kDeepCleanup);
-    Impl::PeakRows rows;
-    rows.group = group;
-    rows.centroid = new PhotoPeakParameterRow(
-      parameters, "centroid", identifier, this);
-    rows.height = new PhotoPeakParameterRow(
-      parameters, "height", identifier + 10, this);
-    rows.fwhm = new PhotoPeakParameterRow(
-      parameters, "FWHM", identifier + 20, this);
-    auto* deletePeak = new TGTextButton(
-      content, "Delete", kDeletePeakBase + static_cast<Long_t>(index));
-    deletePeak->Associate(this);
-    deletePeak->Resize(72, 32);
-    content->AddFrame(parameters,
-      new TGLayoutHints(kLHintsExpandX | kLHintsCenterY));
-    content->AddFrame(deletePeak,
-      new TGLayoutHints(kLHintsRight | kLHintsCenterY, 8, 8, 4, 4));
-    group->AddFrame(content, new TGLayoutHints(kLHintsExpandX));
-    fImpl->peakContainer->AddFrame(group, new TGLayoutHints(kLHintsExpandX));
-    fImpl->peaks.push_back(rows);
-    rowsCreated = true;
-  }
-  if(rowsCreated || !fImpl->subwindowsMapped) {
-    MapSubwindows();
-    fImpl->subwindowsMapped = true;
-  }
-  const std::size_t pageStart = fImpl->peakPage * kPeakRowsPerPage;
-  for(std::size_t slot = 0; slot < fImpl->peaks.size(); ++slot) {
-    const std::size_t peakIndex = pageStart + slot;
-    auto& rows = fImpl->peaks[slot];
-    if(peakIndex < request.peaks.size()) {
-      rows.group->SetTitle(
-        (std::string("initial peak ") + std::to_string(peakIndex + 1)).c_str());
-      rows.centroid->Set(request.peaks[peakIndex].centroid);
-      rows.height->Set(request.peaks[peakIndex].height);
-      rows.fwhm->Set(request.peaks[peakIndex].fwhm);
-      rows.fwhm->SetEnabled(!request.config.relativeFwhm ||
-                            request.peaks.size() < 2);
-      fImpl->peakContainer->ShowFrame(rows.group);
-    } else {
-      fImpl->peakContainer->HideFrame(rows.group);
-    }
-  }
-  if(request.peaks.empty()) {
-    fImpl->peakPageLabel->SetText("no initial peaks");
+    output << "\nTotal area: " << state.result.area << " +/- " << state.result.areaError << "\n";
   } else {
-    const std::size_t pageEnd = std::min(
-      pageStart + kPeakRowsPerPage, request.peaks.size());
-    fImpl->peakPageLabel->SetText(TString::Format(
-      "peaks %zu-%zu of %zu (page %zu/%zu)", pageStart + 1, pageEnd,
-      request.peaks.size(), fImpl->peakPage + 1, pageCount).Data());
+    output << "No fit result. Select peaks and choose Fit.\n";
   }
-  fImpl->previousPeakPage->SetEnabled(fImpl->peakPage > 0);
-  fImpl->nextPeakPage->SetEnabled(fImpl->peakPage + 1 < pageCount);
-  fImpl->previousCentroids.clear();
-  for(const auto& peak : request.peaks)
-    fImpl->previousCentroids.push_back(peak.centroid.value);
-  fImpl->mode->Select(static_cast<int>(request.config.mode), false);
-  fImpl->rootOptions->SetText(request.config.rootOptions.c_str());
-  fImpl->background->Select(static_cast<int>(request.config.background), false);
-  fImpl->backgroundIterations->SetNumber(request.config.backgroundIterations);
-  SetBackgroundOptions(fImpl->backgroundOptionMenu.get(),
-                       request.config.backgroundOptions);
-  fImpl->backgroundOptions->SetText(TString::Format("options (%zu)  \342\226\276",
-    std::count_if(std::begin(kBackgroundOptionList),
-                  std::end(kBackgroundOptionList), [&](const auto& option) {
-      return fImpl->backgroundOptionMenu->IsEntryChecked(option.id);
-    })).Data());
-  fImpl->backgroundLow->SetNumber(request.config.backgroundLow);
-  fImpl->backgroundHigh->SetNumber(request.config.backgroundHigh);
-  const bool backgroundEnabled =
-    request.config.background != PhotoPeakBackgroundMode::None;
-  const bool localBackground =
-    request.config.background == PhotoPeakBackgroundMode::Local;
-  fImpl->backgroundIterations->SetState(backgroundEnabled);
-  fImpl->backgroundOptions->SetEnabled(backgroundEnabled);
-  fImpl->backgroundLow->SetState(localBackground);
-  fImpl->backgroundHigh->SetState(localBackground);
-  const bool multiple = request.peaks.size() > 1;
-  fImpl->relativePosition->SetEnabled(multiple);
-  fImpl->relativeFwhm->SetEnabled(multiple);
-  fImpl->relativePosition->SetState(request.config.relativePosition ?
-                                    kButtonDown : kButtonUp, false);
-  fImpl->relativeFwhm->SetState(request.config.relativeFwhm ?
-                                kButtonDown : kButtonUp, false);
-  const int parameterMap[6] = {kPhotoPeakR, kPhotoPeakBeta, kPhotoPeakStep,
-                               kPhotoPeakA, kPhotoPeakB, kPhotoPeakC};
-  for(int index = 0; index < 6; ++index)
-    fImpl->globals[index]->Set(request.config.global[parameterMap[index]]);
-  const bool lowStat = request.config.mode == PhotoPeakFitMode::LowStat;
-  for(int index = 0; index < 6; ++index)
-    fImpl->globals[index]->SetEnabled(!lowStat);
-  const auto& rControl = request.config.global[kPhotoPeakR];
-  if(rControl.mode == PhotoPeakParameterMode::Fixed && rControl.value == 0.0)
-    fImpl->globals[1]->SetEnabled(false);
-  fImpl->globals[6]->Set(request.config.widthScale);
-  fImpl->globals[6]->SetEnabled(!lowStat && multiple &&
-                                request.config.relativeFwhm);
+  fImpl->results->LoadBuffer(output.str().c_str());
+  if(!fImpl->dirty) {
+    fImpl->rangeLow->SetNumber(request.fitLow);
+    fImpl->rangeHigh->SetNumber(request.fitHigh);
+    fImpl->peakList->RemoveAll();
+    const PhotoPeakSeed* selected = nullptr;
+    for(const auto& peak : request.peaks) {
+      fImpl->peakList->AddEntry(TString::Format("Peak %llu    Centroid %.8g",
+        static_cast<unsigned long long>(peak.id), peak.centroid.value), static_cast<int>(peak.id));
+      if(peak.id == state.selectedPeak)
+        selected = &peak;
+    }
+    fImpl->editedPeak = selected ? selected->id : 0;
+    if(selected) {
+      fImpl->peakList->Select(static_cast<int>(selected->id));
+      fImpl->peakList->SetTopEntry(static_cast<int>(selected->id));
+      fImpl->selected->SetText(TString::Format("Selected peak: %llu (%zu total)",
+        static_cast<unsigned long long>(selected->id), request.peaks.size()));
+      fImpl->peakRows[0]->Set(selected->centroid);
+      fImpl->peakRows[1]->Set(selected->height);
+      fImpl->peakRows[2]->Set(selected->fwhm);
+    } else {
+      fImpl->selected->SetText("No peak selected");
+      for(auto& row : fImpl->peakRows)
+        row->Set(PhotoPeakParameterControl{});
+    }
+    const bool multiple = request.peaks.size() > 1;
+    const bool lowStat = request.config.mode == PhotoPeakFitMode::LowStat;
+    fImpl->peakRows[0]->SetEnabled(selected && (!multiple || !request.config.relativePosition || selected->id == request.peaks.front().id));
+    fImpl->peakRows[1]->SetEnabled(selected != nullptr);
+    fImpl->peakRows[2]->SetEnabled(selected && (!multiple || !request.config.relativeFwhm));
+    fImpl->mode->Select(static_cast<int>(request.config.mode), false);
+    fImpl->rootOptions->SetText(request.config.rootOptions.c_str(), false);
+    fImpl->relativePosition->SetState(request.config.relativePosition ? kButtonDown : kButtonUp, false);
+    fImpl->relativeFwhm->SetState(request.config.relativeFwhm ? kButtonDown : kButtonUp, false);
+    fImpl->relativePosition->SetEnabled(multiple);
+    fImpl->relativeFwhm->SetEnabled(multiple);
+    const int parameterMap[] = {kPhotoPeakR, kPhotoPeakBeta, kPhotoPeakStep, kPhotoPeakA, kPhotoPeakB, kPhotoPeakC};
+    for(int index = 0; index < 6; ++index) {
+      fImpl->globals[index]->Set(request.config.global[parameterMap[index]]);
+      const bool disabled = lowStat && (index < 3 || index == 5);
+      const bool noTail = index == 1 && request.config.global[kPhotoPeakR].mode == PhotoPeakParameterMode::Fixed &&
+        request.config.global[kPhotoPeakR].value == 0.0;
+      fImpl->globals[index]->SetEnabled(!disabled && !noTail);
+    }
+    fImpl->globals[6]->Set(request.config.widthScale);
+    fImpl->globals[6]->SetEnabled(multiple && request.config.relativeFwhm);
+    fImpl->activeParameters->SetText(lowStat ? "LowStat fixes R, BETA, STEP and C at zero for the fit. Stored values are retained." :
+      "Relative position uses the first peak as reference. Relative FWHM uses stored widths and WSCALE.");
+    fImpl->background->Select(static_cast<int>(request.config.background), false);
+    fImpl->backgroundIterations->SetNumber(request.config.backgroundIterations);
+    fImpl->backgroundLow->SetNumber(request.config.backgroundLow);
+    fImpl->backgroundHigh->SetNumber(request.config.backgroundHigh);
+    SetBackgroundOptions(fImpl->backgroundOptionMenu.get(), request.config.backgroundOptions);
+    fImpl->backgroundOptions->SetText(TString::Format("Options (%zu)", std::count_if(std::begin(kBackgroundOptionList),
+      std::end(kBackgroundOptionList), [&](const auto& option) { return fImpl->backgroundOptionMenu->IsEntryChecked(option.id); })));
+    const bool backgroundEnabled = request.config.background != PhotoPeakBackgroundMode::None;
+    fImpl->backgroundIterations->SetEnabled(backgroundEnabled);
+    fImpl->backgroundOptions->SetEnabled(backgroundEnabled);
+    fImpl->backgroundLow->SetEnabled(request.config.background == PhotoPeakBackgroundMode::Local);
+    fImpl->backgroundHigh->SetEnabled(request.config.background == PhotoPeakBackgroundMode::Local);
+  }
+  fImpl->refreshing = false;
   Layout();
-  fImpl->peakContainer->Layout();
-  fImpl->peakCanvas->Layout();
 }
 
+// ============== PhotoPeakControlWindow::Show ==============
+// Purpose: Open or raise the existing non-modal panel. Inputs: None. Outputs: Visible window.
 void PhotoPeakControlWindow::Show() {
   Refresh();
+  MapSubwindows();
+  for(auto& row : fImpl->peakRows)
+    row->Update();
+  for(auto& row : fImpl->globals)
+    row->Update();
   Resize(GetDefaultSize());
   MapWindow();
   RaiseWindow();
 }
 
+// ============== PhotoPeakControlWindow::Hide ==============
+// Purpose: Hide the control panel. Inputs: None. Outputs: Unmapped window.
 void PhotoPeakControlWindow::Hide() {
   UnmapWindow();
 }
 
 // ============== PhotoPeakControlWindow::DetachSession ==============
-// Purpose: Prevent queued GUI commands from using a discarded session.
-// Inputs: None.
-// Outputs: Detached session before event-loop window deletion.
+// Purpose: Ignore queued commands after session disposal.
+// Inputs: None. Outputs: Detached hidden window awaiting ROOT deletion.
 void PhotoPeakControlWindow::DetachSession() {
   fImpl->session = nullptr;
   Hide();

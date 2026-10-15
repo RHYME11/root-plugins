@@ -25,7 +25,15 @@ class PhotoPeakSession {
     void Clean();
     void SetRange(double low, double high);
     void AddPeak(double centroid);
-    void ReplaceRequest(const PhotoPeakFitRequest& request);
+    bool ReplaceRequest(const PhotoPeakFitRequest& request);
+    void SelectPeak(std::uint64_t id);
+    void RemoveSelectedPeak();
+    void SetInteraction(PhotoPeakInteraction mode);
+    void Rebin(bool undo);
+    void Pan(int direction);
+    void Unzoom();
+    void ShowBackground();
+    void SetStatus(const std::string& message);
 
     TCanvas* Canvas() const { return fCanvas; }
     TVirtualPad* Pad() const { return fPad; }
@@ -38,9 +46,11 @@ class PhotoPeakSession {
   private:
     void RefreshMarkers();
     void RefreshGui();
-    void Rebin(bool undo);
-    void Pan(int direction);
-    void ShowBackground();
+    bool CommitPending();
+    bool ValidateRequest(const PhotoPeakFitRequest& request);
+    void Changed();
+    void SortPeaks();
+    void CancelDrag();
 
     TCanvas* fCanvas;
     TVirtualPad* fPad;
@@ -50,11 +60,11 @@ class PhotoPeakSession {
     std::unique_ptr<PhotoPeakControlWindow> fWindow;
     std::unique_ptr<PhotoPeakMarkerController> fMarkers;
     std::unique_ptr<PhotoPeakDrawController> fDrawing;
-    int fRangeClicks;
-    int fDraggingRange;
-    int fDraggingPeak;
-    bool fPeakMoved;
-    bool fPeakWasExisting;
+    std::uint64_t fNextPeakId = 1;
+    int fRangeClicks = 0;
+    int fDraggingRange = -1;
+    std::uint64_t fDraggingPeak = 0;
+    int fDragStart = 0;
 };
 
 #endif

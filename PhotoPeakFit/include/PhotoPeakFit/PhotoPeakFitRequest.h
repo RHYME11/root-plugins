@@ -1,6 +1,7 @@
 #ifndef __PHOTOPEAKFITREQUEST_H__
 #define __PHOTOPEAKFITREQUEST_H__
 
+#include <cstdint>
 #include <vector>
 
 #include <PhotoPeakFit/PhotoPeakFitConfig.h>
@@ -9,6 +10,7 @@ struct PhotoPeakSeed {
   PhotoPeakParameterControl centroid;
   PhotoPeakParameterControl height;
   PhotoPeakParameterControl fwhm;
+  std::uint64_t id = 0; // Session identity; ignored by the numerical fitter.
 };
 
 struct PhotoPeakFitRequest {

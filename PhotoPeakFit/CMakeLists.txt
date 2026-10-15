@@ -42,6 +42,12 @@ ROOT_GENERATE_DICTIONARY(G__PhotoPeakFit
 )
 
 file(COPY include/PhotoPeakFit DESTINATION "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_INCLUDEDIR}")
+add_custom_command(TARGET PhotoPeakFit POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/PhotoPeakFit"
+    "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_INCLUDEDIR}/PhotoPeakFit"
+  COMMENT "Synchronizing PhotoPeakFit interpreter headers"
+)
 configure_file(root/LoadPhotoPeakFit.C.in
   "${CMAKE_BINARY_DIR}/LoadPhotoPeakFit.C" @ONLY)
 install(TARGETS PhotoPeakFit LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

@@ -99,6 +99,7 @@ public:
   bool guiConnected = false;
   TCanvas* arrowCanvas = nullptr;
   UInt_t arrowKey = 0;
+  TCanvas* escapeCanvas = nullptr;
 };
 
 // ============== PhotoPeakRootController::Instance ==============
@@ -256,6 +257,10 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
   auto* session = fImpl->Find(pad);
   if(!session || !session->ValidateTarget())
     return;
+  if(event == kButton1Up && fImpl->escapeCanvas == canvas) {
+    fImpl->escapeCanvas = nullptr;
+    session->SetInteraction(PhotoPeakInteraction::Browse);
+  }
   switch(event) {
     case kButton1Down:
     case kButton1Shift:
@@ -277,9 +282,14 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
   TVirtualPad::TContext context(pad);
   PhotoPeakInputEvent input;
   input.type = event;
-  input.code = event == kKeyPress ? px : static_cast<int>(fImpl->arrowKey);
+  input.code = event == kKeyPress ? (py ? py : px) : static_cast<int>(fImpl->arrowKey);
   input.px = px;
   input.x = pad->PadtoX(pad->AbsPixeltoX(px));
+  const int left = pad->XtoAbsPixel(pad->GetUxmin());
+  const int right = pad->XtoAbsPixel(pad->GetUxmax());
+  const int top = pad->YtoAbsPixel(pad->GetUymax());
+  const int bottom = pad->YtoAbsPixel(pad->GetUymin());
+  input.inPlot = px >= left && px <= right && py >= top && py <= bottom;
   session->HandleEvent(input);
   if(!session->IsClosed()) {
     pad->Modified();
@@ -294,18 +304,23 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
 void PhotoPeakRootController::OnGuiEvent(Event_t* event, Window_t) {
   fImpl->arrowCanvas = nullptr;
   fImpl->arrowKey = 0;
+  fImpl->escapeCanvas = nullptr;
   if(!event || event->fType != kGKeyPress || !gVirtualX)
     return;
   UInt_t keysym = 0;
   char text[8] = {};
   gVirtualX->LookupString(event, text, sizeof(text), keysym);
-  if(keysym != kKey_Left && keysym != kKey_Right)
+  if(keysym != kKey_Left && keysym != kKey_Right && keysym != kKey_Escape)
     return;
   for(TCanvas* canvas : fImpl->canvases) {
     if(CanvasAlive(canvas) && canvas->GetCanvasID() >= 0 &&
        gVirtualX->GetWindowID(canvas->GetCanvasID()) == event->fWindow) {
-      fImpl->arrowCanvas = canvas;
-      fImpl->arrowKey = keysym;
+      if(keysym == kKey_Escape)
+        fImpl->escapeCanvas = canvas;
+      else {
+        fImpl->arrowCanvas = canvas;
+        fImpl->arrowKey = keysym;
+      }
       return;
     }
   }

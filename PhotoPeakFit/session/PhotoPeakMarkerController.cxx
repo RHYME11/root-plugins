@@ -38,8 +38,10 @@ void PhotoPeakMarkerController::Refresh(const PhotoPeakSessionState& state) {
   if(!fPad || !fHistogram)
     return;
   Clear();
-  const double ymin = fPad->GetUymin();
-  const double ymax = fPad->GetUymax();
+  if(!state.rangeVisible)
+    return;
+  const double ymin = fPad->PadtoY(fPad->GetUymin());
+  const double ymax = fPad->PadtoY(fPad->GetUymax());
   const double ranges[2] = {state.request.fitLow, state.request.fitHigh};
   for(double range : ranges) {
     auto* line = new TLine(range, ymin, range, ymax);
@@ -52,8 +54,8 @@ void PhotoPeakMarkerController::Refresh(const PhotoPeakSessionState& state) {
     auto* marker = new TMarker(peak.centroid.value,
       fHistogram->GetBinContent(fHistogram->FindBin(peak.centroid.value)), 20);
     marker->SetUniqueID(kPhotoPeakMarkerObject);
-    marker->SetMarkerColor(kRed);
-    marker->SetMarkerSize(1.2);
+    marker->SetMarkerColor(peak.id == state.selectedPeak ? kBlue + 1 : kRed);
+    marker->SetMarkerSize(peak.id == state.selectedPeak ? 1.5 : 1.2);
     marker->Draw();
   }
   fPad->Modified();

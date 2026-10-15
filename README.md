@@ -1,7 +1,8 @@
 # root-plugins
 
 Optional plugins for CERN ROOT. Each plugin is an independent top-level unit.
-PhotoPeakFit runs directly in native ROOT with its existing fit controls.
+PhotoPeakFit runs directly in native ROOT with an English, non-modal fitting
+control panel linked to the existing histogram canvas.
 
 ## Build
 
@@ -63,27 +64,78 @@ only one active fit session. Starting the same session again raises its window;
 switching its target requires stopping that session first. Failed API calls
 return `false`; `PhotoPeakFit::LastError()` explains the failure.
 
-The control window is non-modal. Its existing layout, parameter defaults,
-background option menus, and three-row initial-peak pagination are retained.
+## Control panel
+
+The English control panel follows the compact toolbar and canvas-picking workflow
+of [jROOT Tools UltraFitEnv](https://github.com/jsmallcombe/jRootAnalysisTools/tree/v4.1).
+It uses ROOT-native widgets and observes the existing canvas after ROOT handles
+its native input. The session remains locked to its original histogram and pad.
+
+The target, active tool, fit range, view actions, and Fit/Clean/Exit buttons remain
+visible. Four pages organize the settings:
+
+| Page | Controls |
+|---|---|
+| Peaks | Scrollable peak list, Add/Delete, selected centroid/height/FWHM, Auto/HighStat/LowStat, relative position and relative FWHM |
+| Shape | R, BETA, STEP, A, B, C, WSCALE, and advanced ROOT fit options |
+| Background | TSpectrum preview scope, iterations, local range, and background options |
+| Results | Model, fit status, chi2/NDF, per-peak values and errors, and total area |
+
+Every parameter has a Value and a mutually exclusive Free/Fixed/Limited mode.
+Limited mode expands Lower/Upper fields. Inactive settings retain their stored
+values: for example, LowStat applies its parameter restrictions to the fit without
+replacing the user's HighStat settings. Relative position uses the lowest-centroid
+seed as its reference; relative FWHM uses the stored seed widths and WSCALE.
+
+Peak identities remain stable when their centroids are edited, dragged, or sorted.
+Selecting a peak in the list highlights its canvas marker and opens its editor.
+The list replaces the former three-peak pagination and handles larger peak sets
+without constructing another parameter editor for each peak.
+
+## Canvas interaction
+
+The default tool is **Pick peaks**. **Set range** offers range selection without
+a modifier key. **Browse** pauses fit picking while preserving ROOT interaction.
 
 | Interaction | Action |
 |---|---|
-| Left click / drag in the plot | Set / move the two red fit-range lines |
-| Shift-left click | Add a peak, or remove an existing peak on release |
-| Shift-left drag | Move a peak centroid |
-| `f` | Fit |
-| `n` / Clean | Clear fit drawings, range selections, and peak seeds |
-| `w` / `q` | Rebin / undo rebin |
-| Left / right arrow | Pan the histogram view |
-| `b` | Display the PhotoPeak background |
-| `o` | Unzoom |
-| Delete in a peak row | Remove its seed and matching centroid marker |
-| Previous / Next | Page through three initial-peak rows |
-| Exit mode / close fit window | Discard the session |
+| Left click in the plot | Add a peak, or select an existing nearby peak |
+| Drag a peak marker | Move its centroid; clicking it again does not delete it |
+| Shift-left click | Set successive fit-range bounds |
+| Set range tool + left click | Set successive fit-range bounds |
+| Drag a range line | Move that bound; crossing the other bound keeps the dragged line under the pointer |
+| Delete selected / canvas Del | Delete the selected peak |
+| Escape over the canvas | Cancel the gesture and enter Browse |
+| Fit / canvas `f` or Enter | Validate pending edits and fit the same committed input |
+| Clean / canvas `n` | Discard drafts, fit drawings, range selections, seeds, and results |
+| Rebin / Undo / canvas `w` / `q` | Rebin / undo rebin |
+| View buttons / left or right arrow | Pan the histogram view |
+| Preview / canvas `b` | Update or clear the TSpectrum preview according to its scope |
+| Unzoom / canvas `o` | Unzoom the histogram axes |
+| Exit / close control window | Discard and release the session |
 
-ROOT-native canvas, axis, selection, drag, and context-menu behavior remains
-active. PhotoPeakFit observes native events and routes them only to its owning
-pad. Coordinate conversion supports logarithmic x axes.
+Enter or leaving a numeric field validates and commits its edits. Apply, changing
+selection/page, and canvas operations use the same submission path. In an input
+field, Enter commits and Del retains its normal text-editing meaning. Invalid
+values stay visible with an English diagnostic; dependent operations stop until
+the values are corrected. Clean and Exit can discard invalid drafts.
+
+The Results page keeps the last fit and its input snapshot separately from the
+initial seeds. Input or binning changes mark that result out of date and remove
+its old fit drawings; selecting a peak or changing the view does not invalidate
+it. Fit failure, unapplied edits, and a current successful result have distinct
+status messages. Results do not overwrite the initial parameter values.
+
+TSpectrum is a **preview**, separate from the A/B/C background used by the fitting
+model. None clears the preview, Local uses its specified range, and Global uses
+the entire spectrum regardless of the current zoom. Iteration count and all
+background option groups apply to the preview. Its calculation uses a detached
+copy and preserves the source histogram's axis range.
+
+ROOT-native canvas, axis, object-selection, cursor, drag, and context-menu behavior
+remains active. Events and shortcuts are scoped to the owning pad; coordinate
+conversion supports logarithmic axes. Ordinary canvas drags on unrelated objects
+do not add peaks or change fit bounds.
 
 Programmatic cleanup is also available:
 
@@ -93,11 +145,12 @@ PhotoPeakFit::Stop(gPad);
 PhotoPeakFit::StopAll();
 ```
 
-Exiting removes PhotoPeak drawings and releases its histogram clone and retained
-fitter. Re-entry creates a fresh empty session. Removing the target drawing,
-deleting the target or subpad, or closing the canvas invalidates the session.
-Queued GUI commands are detached before the control window is deleted safely
-by ROOT's event loop. Session operations run on ROOT's main GUI thread.
+Clean retains fit settings and the current binning. Exiting removes PhotoPeak
+drawings and releases its histogram clone and retained fitter. Re-entry creates a
+fresh empty session. Removing the target drawing, deleting the target or subpad,
+or closing the canvas invalidates the session. Queued GUI commands are detached
+before the control window is deleted safely by ROOT's event loop. Session
+operations run on ROOT's main GUI thread.
 
 ## Install
 
@@ -116,7 +169,7 @@ Native `TCanvas` is supported; web canvases and `RCanvas` are outside this stage
 PhotoPeakFit/
 ├── common/                  # Fit algorithms and configuration
 ├── session/                 # State, target validation, markers, and drawings
-├── gui/                     # Existing ROOT control window and parameter rows
+├── gui/                     # English tabbed control panel and parameter editors
 ├── root/                    # Startup, event routing, dictionary, and loader
 └── include/PhotoPeakFit/     # Public headers; detail/ contains ROOT receiver metadata
 ```
@@ -138,7 +191,8 @@ ctest --test-dir tests/root-build --output-on-failure
 
 The tests cover numerical single/multiple peak fits, actual canvas signal
 connections, target selection, independent pads, shortcuts, logarithmic
-coordinates, drawing/object removal, and shutdown. When
+coordinates, drawing/object removal, shutdown, stable peak IDs, stored mode preferences,
+result snapshots and invalidation, and local/global background previews. When
 `tests/hist_fragment62276.root` is present, a separate test fits its
 `Array16/energy` and `Array17/energy` spectra read-only.
 
@@ -148,6 +202,7 @@ Run the native GUI checks from an interactive desktop session:
 tests/root-build/photopeak-tests/photopeak_tests --gui
 ```
 
-This additionally checks the existing control window's peak pagination, Delete,
-Clean, and close actions. Test data, generated libraries, and logs stay ignored;
+This additionally checks the English control window with 25 peaks, stable
+selection after sorting, invalid draft retention, mode switching, Fit button/key
+equivalence, Delete, Clean, and close actions. Test data, generated libraries, and logs stay ignored;
 only focused test source files are versioned.

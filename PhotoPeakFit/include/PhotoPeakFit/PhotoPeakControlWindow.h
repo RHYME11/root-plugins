@@ -15,7 +15,8 @@ class PhotoPeakControlWindow : public TGMainFrame {
     Bool_t ProcessMessage(Long_t message, Long_t parameter1,
                           Long_t parameter2) override;
     void CloseWindow() override;
-    void Refresh();
+    void Refresh(bool discardEdits = false);
+    bool CommitEdits();
     void Show();
     void Hide();
     void DetachSession();
