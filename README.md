@@ -78,8 +78,8 @@ visible. Four pages organize the settings:
 |---|---|
 | Peaks | Scrollable peak list, Add/Delete, selected centroid/height/FWHM, Auto/HighStat/LowStat, relative position and relative FWHM |
 | Shape | R, BETA, STEP, A, B, C, WSCALE, and advanced ROOT fit options |
-| Background | TSpectrum preview scope, iterations, local range, and background options |
-| Results | Model, fit status, chi2/NDF, fitted R/BETA/STEP/A/B/C, active WSCALE, per-peak values and errors, and total area |
+| Background | TSpectrum background used by Fit: scope, iterations, local range, options, Update and Disable |
+| Results | Model, fit status, chi2/NDF, background treatment, fitted R/BETA/STEP/A/B/C, active WSCALE, per-peak values and errors, and total area |
 
 Every parameter has a Value and a mutually exclusive Free/Fixed/Limited mode.
 Limited mode expands Lower/Upper fields. Inactive settings retain their stored
@@ -97,15 +97,15 @@ without constructing another parameter editor for each peak.
 
 ## Canvas interaction
 
-The default tool is **Pick peaks**. **Set range** offers range selection without
-a modifier key. **Browse** pauses fit picking while preserving ROOT interaction.
+The default tool is **Pick peaks**. Shift-click sets the range, and either range
+line can be dragged in this same tool. **Browse** pauses fit picking while
+preserving ROOT interaction.
 
 | Interaction | Action |
 |---|---|
 | Left click in the plot | Add a peak, or select an existing nearby peak |
 | Drag a peak marker | Move its centroid; clicking it again does not delete it |
 | Shift-left click | Set successive fit-range bounds |
-| Set range tool + left click | Set successive fit-range bounds |
 | Drag a range line | Move that bound; crossing the other bound keeps the dragged line under the pointer |
 | Delete selected / canvas Del | Delete the selected peak |
 | Escape over the canvas | Cancel the gesture and enter Browse |
@@ -113,7 +113,7 @@ a modifier key. **Browse** pauses fit picking while preserving ROOT interaction.
 | Clean / canvas `n` | Discard drafts, fit drawings, range selections, seeds, and results |
 | Rebin / Undo / canvas `w` / `q` | Rebin / undo rebin |
 | View buttons / left or right arrow | Pan the histogram view |
-| Preview / canvas `b` | Update or clear the TSpectrum preview according to its scope |
+| Update background / canvas `b` | Recalculate the selected TSpectrum background |
 | Unzoom / canvas `o` | Unzoom the histogram axes |
 | Exit / close control window | Discard and release the session |
 
@@ -140,11 +140,24 @@ continue to describe the peak contribution alone.
 The legend contains only a colored line and the fitted centroid (three decimal
 places) for each peak, including single-peak fits.
 
-TSpectrum is a **preview**, separate from the A/B/C background used by the fitting
-model. None clears the preview, Local uses its specified range, and Global uses
-the entire spectrum regardless of the current zoom. Iteration count and all
-background option groups apply to the preview. Its calculation uses a detached
-copy and preserves the source histogram's axis range.
+TSpectrum **participates in fitting** when Local or Global is selected. Selecting
+either scope immediately draws a thick green background estimate; changing its
+iterations, options or local bounds updates that estimate. **Update background**
+recalculates it. **Disable background** selects None, removes the estimate, and
+disables subtraction for the next fit. None uses the ordinary fitted background.
+
+Global estimates the entire spectrum regardless of zoom. Local uses its specified
+range, expanding it to cover the fit range when needed; Results reports the
+effective range. Fit subtracts the estimate from a detached histogram, retains
+the original bin errors, and fits the remaining spectrum. The displayed total,
+fitted background, and individual peaks all include the estimate again, so they
+overlay the original spectrum. A/B/C and STEP describe the remaining fitted
+background. The original histogram, errors, statistics, and zoom are preserved.
+
+The estimate is treated as fixed; its uncertainty is not added to fit errors.
+Background-subtracted fitting uses chi-square; ROOT likelihood option `L` is
+rejected because the subtracted bins are not Poisson counts. Invalid background
+settings stop the fit with a message instead of silently disabling subtraction.
 
 ROOT-native canvas, axis, object-selection, cursor, drag, and context-menu behavior
 remains active. Events and shortcuts are scoped to the owning pad; coordinate
@@ -207,10 +220,13 @@ ctest --test-dir tests/root-build --output-on-failure
 The tests cover numerical single/multiple peak fits, actual canvas signal
 connections, target selection, independent pads, shortcuts, logarithmic
 coordinates, drawing/object removal, shutdown, stable peak IDs, stored mode preferences,
-result snapshots and invalidation, local/global background previews, and
+result snapshots and invalidation, local/global background estimation, and
 background-offset component curves with unchanged numerical areas, fitted shared
-parameters, centroid-only legends, and numbering resets after repeated Clean. When
-`tests/hist_fragment62276.root` is present, a separate test fits its
+parameters, centroid-only legends, and numbering resets after repeated Clean.
+Single/multiple peak fits with Local/Global are compared with independently
+subtracted spectra, including errors and areas. Tests also verify restored
+backgrounds, preserved source data, invalid-setting errors and temporary-fitter
+cleanup. When `tests/hist_fragment62276.root` is present, a separate test fits its
 `Array16/energy` and `Array17/energy` spectra read-only.
 
 Run the native GUI checks from an interactive desktop session:

@@ -21,6 +21,12 @@ enum PhotoPeakParameter {
 struct PhotoPeakFitResult {
   int status = 1;
   std::string model;
+  std::string message;
+  std::string backgroundMode = "None";
+  bool backgroundSubtracted = false;
+  int backgroundIterations = 0;
+  double backgroundLow = 0.0;
+  double backgroundHigh = 0.0;
   int fitBins = 0;
   int freeParameters = 0;
   int ndf = 0;
@@ -46,6 +52,7 @@ struct PhotoPeakFitResult {
   std::vector<Peak> peaks;
 
   std::string GlobalParameterReport() const;
+  std::string BackgroundReport() const;
 };
 
 #endif

@@ -20,3 +20,20 @@ std::string PhotoPeakFitResult::GlobalParameterReport() const {
     output << "  WSCALE: " << widthScale << " +/- " << widthScaleError << "\n";
   return output.str();
 }
+
+// ============== PhotoPeakFitResult::BackgroundReport ==============
+// Purpose: Explain the background treatment used for this fit snapshot.
+// Inputs: This result. Outputs: Effective scope, settings and display scale.
+std::string PhotoPeakFitResult::BackgroundReport() const {
+  std::ostringstream output;
+  output << std::setprecision(10) << "TSpectrum background: " << backgroundMode << "\n";
+  if(backgroundSubtracted) {
+    output << "  Iterations: " << backgroundIterations << "\n  Estimate range: ["
+      << backgroundLow << ", " << backgroundHigh << "]\n"
+      << "  Background subtracted for fitting; added back to displayed curves.\n"
+      << "  A/B/C describe the remaining background.\n";
+  }
+  if(!message.empty())
+    output << message << "\n";
+  return output.str();
+}

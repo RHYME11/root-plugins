@@ -3,7 +3,7 @@
 
 #include <PhotoPeakFit/PhotoPeakFitRequest.h>
 
-enum class PhotoPeakInteraction { Peaks, Range, Browse };
+enum class PhotoPeakInteraction { Peaks, Browse };
 
 struct PhotoPeakSessionState {
   PhotoPeakFitRequest request;

@@ -11,7 +11,6 @@
 #include <TH1.h>
 #include <TList.h>
 #include <TROOT.h>
-#include <TSpectrum.h>
 #include <TVirtualFitter.h>
 #include <TVirtualPad.h>
 
@@ -21,28 +20,9 @@
 #include "PhotoPeakDrawController.h"
 #include "PhotoPeakMarkerController.h"
 #include "PhotoPeakTarget.h"
+#include "PhotoPeakBackground.h"
 
 namespace {
-
-// ============== RemoveSessionObjects ==============
-// Purpose: Remove pad primitives owned by one PhotoPeak session category.
-// Inputs: Pad and object-name prefix.
-// Outputs: Deleted matching primitives.
-void RemoveSessionObjects(TVirtualPad* pad, const char* prefix) {
-  if(!pad || !pad->GetListOfPrimitives() || !prefix || !*prefix)
-    return;
-  const std::string requested = prefix;
-  std::vector<TObject*> remove;
-  TIter next(pad->GetListOfPrimitives());
-  while(TObject* object = next()) {
-    if(std::string(object->GetName()).find(requested) == 0)
-      remove.push_back(object);
-  }
-  for(TObject* object : remove) {
-    pad->GetListOfPrimitives()->Remove(object);
-    delete object;
-  }
-}
 
 // ============== ReleaseSessionFitter ==============
 // Purpose: Release ROOT's retained fitter when it belongs to this session.
@@ -145,8 +125,7 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
     fDragStart = event.px;
     const double tolerance = std::fabs(fPad->PadtoX(fPad->AbsPixeltoX(event.px + 7)) -
       fPad->PadtoX(fPad->AbsPixeltoX(event.px)));
-    const bool rangeTool = event.type == kButton1Shift ||
-      fState.interaction == PhotoPeakInteraction::Range;
+    const bool rangeTool = event.type == kButton1Shift;
     if(fState.rangeVisible && !rangeTool) {
       if(std::fabs(event.x - fState.request.fitLow) <= tolerance)
         fDraggingRange = 0;
@@ -238,7 +217,7 @@ void PhotoPeakSession::Abandon() {
       fMarkers->Clear();
     if(fDrawing)
       fDrawing->CleanFitObjects();
-    RemoveSessionObjects(fPad, "PhotoPeakSession_background");
+    RemovePhotoPeakBackground(fPad, fHistogram);
     fPad->Modified();
   }
   if(fWindow) {
@@ -368,7 +347,8 @@ void PhotoPeakSession::Fit() {
   fState.hasResult = true;
   fState.resultRevision = revision;
   fState.fittedRebinFactor = fState.rebinFactor;
-  SetStatus(fState.result.status == 0 ? "Fit completed. Results match the current input." :
+  SetStatus(!fState.result.message.empty() ? fState.result.message :
+    fState.result.status == 0 ? "Fit completed. Results match the current input." :
     "Fit failed or did not converge. Inspect the status and results.");
 }
 
@@ -380,7 +360,6 @@ void PhotoPeakSession::Changed() {
   ReleaseSessionFitter(fHistogram);
   if(fDrawing)
     fDrawing->CleanFitObjects();
-  RemoveSessionObjects(fPad, "PhotoPeakSession_background");
   fState.status = fState.hasResult ? "Input changed. Refit required; previous results are out of date." :
     "Input updated. Ready to fit.";
 }
@@ -403,6 +382,7 @@ void PhotoPeakSession::Clean() {
   Changed();
   if(fMarkers)
     fMarkers->Clear();
+  RemovePhotoPeakBackground(fPad, fHistogram);
   fState.request.peaks.clear();
   fNextPeakId = 1;
   fState.selectedPeak = 0;
@@ -434,13 +414,16 @@ void PhotoPeakSession::SetRange(double low, double high) {
   high = std::min(high, fHistogram->GetXaxis()->GetXmax());
   if(low >= high)
     return;
-  if(low != fState.request.fitLow || high != fState.request.fitHigh)
+  const bool changed = low != fState.request.fitLow || high != fState.request.fitHigh;
+  if(changed)
     Changed();
   fState.request.fitLow = low;
   fState.request.fitHigh = high;
   fState.rangeVisible = true;
   RefreshMarkers();
   RefreshGui();
+  if(changed && fState.request.config.background == PhotoPeakBackgroundMode::Local)
+    ShowBackground();
 }
 
 // ============== PhotoPeakSession::SortPeaks ==============
@@ -510,6 +493,12 @@ bool PhotoPeakSession::ReplaceRequest(const PhotoPeakFitRequest& request) {
   }
   const auto& a = old.config;
   const auto& b = next.config;
+  const bool backgroundChanged = a.background != b.background ||
+    (b.background != PhotoPeakBackgroundMode::None &&
+      (a.backgroundIterations != b.backgroundIterations || a.backgroundOptions != b.backgroundOptions ||
+       a.backgroundLow != b.backgroundLow || a.backgroundHigh != b.backgroundHigh ||
+       (b.background == PhotoPeakBackgroundMode::Local &&
+        (old.fitLow != next.fitLow || old.fitHigh != next.fitHigh))));
   same = same && a.mode == b.mode && a.background == b.background && a.rootOptions == b.rootOptions &&
     a.backgroundIterations == b.backgroundIterations && a.backgroundOptions == b.backgroundOptions &&
     a.backgroundLow == b.backgroundLow && a.backgroundHigh == b.backgroundHigh &&
@@ -526,6 +515,8 @@ bool PhotoPeakSession::ReplaceRequest(const PhotoPeakFitRequest& request) {
     RefreshMarkers();
   }
   RefreshGui();
+  if(!same && backgroundChanged)
+    ShowBackground();
   return true;
 }
 
@@ -559,7 +550,7 @@ void PhotoPeakSession::RemoveSelectedPeak() {
 
 // ============== PhotoPeakSession::SetInteraction ==============
 // Purpose: Switch explicit tools and cancel unfinished drags.
-// Inputs: Peaks, Range or Browse. Outputs: Mode and English guidance.
+// Inputs: Peaks or Browse. Outputs: Mode and English guidance.
 void PhotoPeakSession::SetInteraction(PhotoPeakInteraction mode) {
   if(!ValidateTarget() || fState.fitting)
     return;
@@ -567,7 +558,6 @@ void PhotoPeakSession::SetInteraction(PhotoPeakInteraction mode) {
   fRangeClicks = 0;
   fState.interaction = mode;
   SetStatus(mode == PhotoPeakInteraction::Browse ? "Browse: fit picking is paused. ROOT interaction remains active." :
-    mode == PhotoPeakInteraction::Range ? "Set range: click the low and high bounds, or drag a range line." :
     "Pick peaks: click to add or select; drag a marker to move; Shift-click to set the range.");
 }
 
@@ -611,10 +601,13 @@ void PhotoPeakSession::Rebin(bool undo) {
     fState.rebinFactor *= 2;
   }
   fHistogram->GetXaxis()->SetRangeUser(low, high);
+  RemovePhotoPeakBackground(fPad, fHistogram);
   RefreshMarkers();
   RefreshGui();
   fPad->Modified();
   fPad->Update();
+  if(fState.request.config.background != PhotoPeakBackgroundMode::None)
+    ShowBackground();
 }
 
 // ============== PhotoPeakSession::Pan ==============
@@ -646,43 +639,30 @@ void PhotoPeakSession::Unzoom() {
 }
 
 // ============== PhotoPeakSession::ShowBackground ==============
-// Purpose: Preview TSpectrum using the requested range, iterations and options.
-// Inputs: Committed preview settings. Outputs: Detached preview histogram, or cleared preview.
+// Purpose: Show the TSpectrum background selected for fitting.
+// Inputs: Committed background settings. Outputs: Visible estimate used by Fit, or disabled background.
 void PhotoPeakSession::ShowBackground() {
   if(!ValidateTarget() || !CommitPending() || !ValidateRequest(fState.request))
     return;
-  RemoveSessionObjects(fPad, "PhotoPeakSession_background");
+  RemovePhotoPeakBackground(fPad, fHistogram);
   const auto& config = fState.request.config;
   if(config.background == PhotoPeakBackgroundMode::None) {
     fPad->Modified();
     fPad->Update();
-    SetStatus("Background preview cleared (Scope: None).");
+    SetStatus("TSpectrum background disabled. Fit uses only its A/B/C and step background.");
     return;
   }
   TVirtualPad::TContext context(fPad);
-  std::unique_ptr<TH1> source(dynamic_cast<TH1*>(fHistogram->Clone("PhotoPeak_background_source")));
-  source->SetDirectory(nullptr);
-  if(config.background == PhotoPeakBackgroundMode::Local)
-    source->GetXaxis()->SetRangeUser(config.backgroundLow, config.backgroundHigh);
-  else
-    source->GetXaxis()->SetRange(1, source->GetNbinsX());
-  const int bins = source->GetXaxis()->GetLast() - source->GetXaxis()->GetFirst() + 1;
-  if(config.backgroundIterations > (bins - 1) / 2) {
-    SetStatus("Background iterations: selected range needs at least 2 * iterations + 1 bins.");
+  auto estimate = EstimatePhotoPeakBackground(fHistogram, config,
+    fState.request.fitLow, fState.request.fitHigh);
+  if(!estimate.error.empty()) {
+    fPad->Modified();
+    fPad->Update();
+    SetStatus(estimate.error);
     return;
   }
-  TSpectrum spectrum;
-  TH1* background = spectrum.Background(source.get(), config.backgroundIterations, config.backgroundOptions.c_str());
-  if(!background) {
-    SetStatus("TSpectrum could not create the background preview.");
-    return;
-  }
-  background->SetName("PhotoPeakSession_background");
-  background->SetDirectory(nullptr);
-  background->SetLineColor(kBlue + 1);
-  background->SetLineStyle(2);
-  background->Draw("hist same");
+  DrawPhotoPeakBackground(fPad, fHistogram, estimate);
   fPad->Modified();
   fPad->Update();
-  SetStatus("TSpectrum preview updated. Preview settings do not subtract the fit background.");
+  SetStatus("Background updated (thick green line). Fit subtracts it; displayed curves include it.");
 }

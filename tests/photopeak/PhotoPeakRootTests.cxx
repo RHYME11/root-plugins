@@ -37,6 +37,7 @@
 #include <TROOT.h>
 #include <TSystem.h>
 #include <TString.h>
+#include <TSpectrum.h>
 #include <TVirtualFitter.h>
 #include <TVirtualX.h>
 
@@ -61,6 +62,14 @@ int Markers(TVirtualPad* pad) {
   while(TObject* object = next())
     count += object->GetUniqueID() == 0x50500001;
   return count;
+}
+
+// ============== EstimatedBackground ==============
+// Purpose: Locate the TSpectrum estimate for one target.
+// Inputs: Pad and histogram identity. Outputs: Background drawing or null.
+TH1* EstimatedBackground(TVirtualPad* pad, TH1* histogram) {
+  return dynamic_cast<TH1*>(pad->GetListOfPrimitives()->FindObject(TString::Format(
+    "PhotoPeakBackground_%p_estimate", static_cast<void*>(histogram))));
 }
 
 // ============== Emit ==============
@@ -168,7 +177,9 @@ void PeakDrawing() {
     seed.fwhm.value = 3.5;
     request.peaks.push_back(seed);
   }
-  for(auto mode : {PhotoPeakFitMode::LowStat, PhotoPeakFitMode::HighStat}) {
+  for(int scenario = 0; scenario < 4; ++scenario) {
+    const auto mode = scenario % 2 == 0 ? PhotoPeakFitMode::LowStat : PhotoPeakFitMode::HighStat;
+    request.config.background = scenario < 2 ? PhotoPeakBackgroundMode::None : PhotoPeakBackgroundMode::Global;
     request.config.mode = mode;
     request.config.relativePosition = mode == PhotoPeakFitMode::HighStat;
     request.config.global[kPhotoPeakR] = {10, PhotoPeakParameterMode::Fixed, 0, 100};
@@ -219,6 +230,137 @@ void PeakDrawing() {
     Check(std::string(object->GetName()).find("PhotoPeak_") != 0, "component drawings cleaned on exit");
 }
 
+// ============== BackgroundFits ==============
+// Purpose: Verify subtraction affects fitting and the baseline is restored exactly once.
+// Inputs: Curved continuum and one/two peaks. Outputs: Numerical, drawing and ownership checks.
+void BackgroundFits() {
+  TH1D hist("backgroundInput", "backgroundInput", 1000, 0, 200);
+  hist.SetDirectory(nullptr);
+  for(int bin = 1; bin <= hist.GetNbinsX(); ++bin) {
+    const double x = hist.GetBinCenter(bin);
+    const double value = 500 + 0.05 * std::pow(x - 106, 2) +
+      500 * std::exp(-0.5 * std::pow((x - 100) / 1.5, 2)) +
+      300 * std::exp(-0.5 * std::pow((x - 112) / 1.5, 2));
+    hist.SetBinContent(bin, value);
+  }
+  TCanvas canvas("backgroundFits", "backgroundFits", 800, 600);
+  hist.GetXaxis()->SetRangeUser(85, 125);
+  hist.Draw();
+  canvas.Update();
+  Check(PhotoPeakFit::Start(&hist, &canvas), "background fit session");
+  for(auto scope : {PhotoPeakBackgroundMode::Global, PhotoPeakBackgroundMode::Local}) {
+    for(int count : {1, 2}) {
+      PhotoPeakFitRequest request;
+      request.fitLow = 90;
+      request.fitHigh = count == 1 ? 106 : 122;
+      request.config.mode = PhotoPeakFitMode::LowStat;
+      request.config.background = scope;
+      request.config.backgroundIterations = 20;
+      request.config.backgroundLow = 95;
+      request.config.backgroundHigh = 103;
+      for(int index = 0; index < count; ++index) {
+        PhotoPeakSeed seed;
+        seed.centroid.value = index == 0 ? 100 : 112;
+        seed.height.value = index == 0 ? 500 : 300;
+        seed.fwhm.value = 3.5;
+        request.peaks.push_back(seed);
+      }
+      TH1D original(hist);
+      original.SetDirectory(nullptr);
+      TH1D source(hist);
+      source.SetDirectory(nullptr);
+      source.GetXaxis()->SetRange(1, source.GetNbinsX());
+      if(scope == PhotoPeakBackgroundMode::Local)
+        source.GetXaxis()->SetRangeUser(request.fitLow, request.fitHigh);
+      TSpectrum spectrum;
+      std::unique_ptr<TH1> estimate(spectrum.Background(&source, 20, request.config.backgroundOptions.c_str()));
+      Check(estimate != nullptr, "independent TSpectrum estimate");
+      estimate->SetDirectory(nullptr);
+      TH1D residual(hist);
+      residual.SetDirectory(nullptr);
+      for(int bin = 1; bin <= hist.GetNbinsX(); ++bin) {
+        residual.SetBinContent(bin, hist.GetBinContent(bin) - estimate->GetBinContent(bin));
+        residual.SetBinError(bin, hist.GetBinError(bin));
+      }
+      auto withoutBackground = request;
+      withoutBackground.config.background = PhotoPeakBackgroundMode::None;
+      const auto expected = PhotoPeakFitter::Fit(&residual, withoutBackground, nullptr, false);
+      const auto actual = PhotoPeakFitter::Fit(&hist, request, &canvas, true);
+      Check(actual.status == 0 && actual.model == expected.model && actual.peaks.size() == expected.peaks.size(),
+        "background fit matches independently subtracted input");
+      Check(actual.backgroundSubtracted && actual.backgroundMode ==
+        (scope == PhotoPeakBackgroundMode::Global ? "Global" : "Local") &&
+        actual.backgroundLow <= request.fitLow && actual.backgroundHigh >= request.fitHigh,
+        "result records the selected scope and effective range covering the fit");
+      for(int parameter = kPhotoPeakA; parameter <= kPhotoPeakStep; ++parameter)
+        Check(std::fabs(actual.parameters[parameter] - expected.parameters[parameter]) < 1e-8,
+          "shared parameters are fitted to subtracted data");
+      Check(std::fabs(actual.area - expected.area) < 1e-7 &&
+        std::fabs(actual.areaError - expected.areaError) < 1e-7,
+        "peak areas and covariance use subtracted data with original errors");
+      for(int index = 0; index < count; ++index)
+        Check(std::fabs(actual.peaks[index].centroid - expected.peaks[index].centroid) < 1e-8,
+          "background-aware centroids match independent fitting");
+      Check(TVirtualFitter::GetFitter() == nullptr, "no retained fitter points at the temporary histogram");
+      const TString prefix = TString::Format("PhotoPeak_%p_", static_cast<void*>(&hist));
+      auto* total = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "total_fit"));
+      auto* background = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "background_fit"));
+      auto* drawing = EstimatedBackground(&canvas, &hist);
+      Check(total && background && drawing && drawing->GetLineWidth() >= 3 && drawing->GetLineStyle() == 1,
+        "fit draws a visible estimate and restored fit curves");
+      Check(total->GetNumberFreeParameters() == actual.freeParameters && total->GetNDF() == actual.ndf,
+        "restored curve preserves fitted parameter constraints and statistics");
+      CheckLegend(&canvas, &hist, actual);
+      for(double x : {95.1, 99.9, 103.1, 105.1}) {
+        const double base = estimate->GetBinContent(estimate->FindBin(x));
+        const double centered = x - 0.5 * (request.fitLow + request.fitHigh);
+        const double remaining = actual.parameters[kPhotoPeakA] + actual.parameters[kPhotoPeakB] * centered;
+        Check(std::fabs(background->Eval(x) - base - remaining) < 1e-7,
+          "displayed fitted background includes the TSpectrum estimate exactly once");
+        double peaks = 0;
+        for(const auto& peak : actual.peaks)
+          peaks += peak.height * std::exp(-0.5 * std::pow((x - peak.centroid) / (peak.fwhm / 2.35482), 2));
+        Check(std::fabs(total->Eval(x) - background->Eval(x) - peaks) < 1e-6,
+          "restored total overlays peaks on the full background");
+        if(count == 2) {
+          auto* first = static_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_0"));
+          auto* second = static_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_1"));
+          Check(first && second && std::fabs(first->Eval(x) + second->Eval(x) -
+            background->Eval(x) - total->Eval(x)) < 1e-6,
+            "both individual peaks include the full background");
+        }
+      }
+      for(int bin = 0; bin <= hist.GetNbinsX() + 1; ++bin)
+        Check(hist.GetBinContent(bin) == original.GetBinContent(bin) &&
+          hist.GetBinError(bin) == original.GetBinError(bin), "source bins and errors are preserved");
+      Check(hist.GetEntries() == original.GetEntries() && hist.GetSumw2N() == original.GetSumw2N() &&
+        hist.GetXaxis()->GetFirst() == original.GetXaxis()->GetFirst() &&
+        hist.GetXaxis()->GetLast() == original.GetXaxis()->GetLast(), "source statistics and zoom are preserved");
+    }
+  }
+  PhotoPeakFitConfig invalid;
+  invalid.background = PhotoPeakBackgroundMode::Global;
+  invalid.backgroundIterations = hist.GetNbinsX();
+  const auto failure = PhotoPeakFitter::Fit(&hist, 90, 106, 100, invalid, nullptr, false);
+  Check(failure.status != 0 && !failure.message.empty() && !failure.backgroundSubtracted,
+    "invalid background settings fail explicitly instead of silently fitting without background");
+  invalid.backgroundIterations = 20;
+  invalid.rootOptions = "RQLSN";
+  const auto likelihood = PhotoPeakFitter::Fit(&hist, 90, 106, 100, invalid, nullptr, false);
+  Check(likelihood.status != 0 && likelihood.message.find("chi-square") != std::string::npos,
+    "Poisson likelihood is not silently applied to background-subtracted bins");
+  PhotoPeakFitRequest invalidRequest;
+  invalidRequest.fitLow = 90;
+  invalidRequest.fitHigh = 106;
+  invalidRequest.config = invalid;
+  invalidRequest.peaks.resize(1);
+  invalidRequest.peaks.front().centroid.value = 100;
+  const auto noFit = PhotoPeakFitter::Fit(&hist, invalidRequest, nullptr, false);
+  Check(noFit.peaks.empty() && !noFit.message.empty(), "background errors do not create a fictitious zero-valued peak");
+  Check(PhotoPeakFit::Stop(&canvas) && !EstimatedBackground(&canvas, &hist),
+    "background drawings and captured estimates are released on exit");
+}
+
 // ============== RootInteraction ==============
 // Purpose: Exercise routing, original controls, and target selection boundaries.
 // Inputs: None.
@@ -260,11 +402,11 @@ void RootInteraction() {
   canvas.ProcessedEvent(kKeyPress, 'q', 0, &first);
   Check(first.GetNbinsX() == bins, "undo rebin shortcut");
   canvas.ProcessedEvent(kKeyPress, 'b', 0, &first);
-  Check(!left->GetListOfPrimitives()->FindObject("PhotoPeakSession_background"),
+  Check(!EstimatedBackground(left, &first),
     "background shortcut honors None scope");
   canvas.ProcessedEvent(kKeyPress, 'n', 0, &first);
   Check(Markers(left) == 0 &&
-    !left->GetListOfPrimitives()->FindObject("PhotoPeakSession_background"), "clean shortcut");
+    !EstimatedBackground(left, &first), "clean shortcut");
   canvas.ProcessedEvent(kButton1Down, 2, 2, first.GetXaxis());
   Check(Markers(left) == 0, "axis event does not select fit range");
   Check(PhotoPeakFit::Stop(left), "stop left");
@@ -459,6 +601,7 @@ void GuiControls() {
     }
   }
   Check(window, "English control window created");
+  Check(!FindWidget<TGTextButton>(window, 112), "redundant Set range button is removed");
   auto* initialList = FindWidget<TGListBox>(window, 110);
   auto* initialResults = FindWidget<TGTextView>(window, -1);
   Check(initialList && !initialList->GetScrollBar()->IsMapped(),
@@ -590,6 +733,27 @@ void GuiControls() {
   resultText = initialResults->GetText()->AsString().Data();
   Check(resultText.find("Centroid: 100.4 +/- 0") != std::string::npos && tabs->GetCurrent() == 3,
     "refit immediately replaces visible Results while preserving the selected tab");
+  auto* backgroundMode = FindWidget<TGComboBox>(window, 106);
+  auto* updateBackground = FindWidget<TGTextButton>(window, 125);
+  auto* disableBackground = FindWidget<TGTextButton>(window, 126);
+  Check(backgroundMode && updateBackground && disableBackground && !updateBackground->IsEnabled(),
+    "background controls have explicit update and disable actions");
+  backgroundMode->Select(2, false);
+  window->ProcessMessage(MK_MSG(kC_COMMAND, kCM_COMBOBOX), 106, 2);
+  Check(EstimatedBackground(&canvas, &hist) && updateBackground->IsEnabled(),
+    "choosing Global automatically shows its background estimate");
+  window->ProcessMessage(button, 100, 0);
+  resultText = initialResults->GetText()->AsString().Data();
+  Check(session.State().result.backgroundSubtracted && resultText.find("TSpectrum background: Global") != std::string::npos,
+    "GUI Fit uses and immediately reports the selected Global background");
+  const auto backgroundRevision = session.State().revision;
+  window->ProcessMessage(button, 125, 0);
+  Check(EstimatedBackground(&canvas, &hist) && session.State().revision == backgroundRevision,
+    "Update background redraws without clearing the estimate or invalidating an unchanged fit");
+  window->ProcessMessage(button, 126, 0);
+  Check(session.State().request.config.background == PhotoPeakBackgroundMode::None &&
+    !EstimatedBackground(&canvas, &hist) && !updateBackground->IsEnabled(),
+    "Disable background clears the drawing and disables subtraction for the next fit");
   window->CloseWindow();
   Check(session.IsClosed(), "window close exits session");
   gSystem->ProcessEvents();
@@ -695,7 +859,7 @@ void SessionState() {
   const int firstBin = hist.GetXaxis()->GetFirst();
   const int lastBin = hist.GetXaxis()->GetLast();
   session.ShowBackground();
-  auto* background = dynamic_cast<TH1*>(canvas.GetListOfPrimitives()->FindObject("PhotoPeakSession_background"));
+  auto* background = EstimatedBackground(&canvas, &hist);
   Check(background && background->GetBinContent(hist.FindBin(50)) == 0 &&
     background->GetBinContent(hist.FindBin(100)) > 0, "local preview uses requested range");
   Check(hist.GetXaxis()->GetFirst() == firstBin && hist.GetXaxis()->GetLast() == lastBin,
@@ -704,12 +868,19 @@ void SessionState() {
   request.config.backgroundIterations = 9;
   Check(session.ReplaceRequest(request), "accept global preview settings");
   session.ShowBackground();
-  background = dynamic_cast<TH1*>(canvas.GetListOfPrimitives()->FindObject("PhotoPeakSession_background"));
+  background = EstimatedBackground(&canvas, &hist);
   Check(background && background->GetBinContent(hist.FindBin(50)) > 0, "global preview covers full spectrum");
+  request.peaks.front().height.value += 1;
+  Check(session.ReplaceRequest(request) && EstimatedBackground(&canvas, &hist) == background,
+    "editing a peak retains the unchanged background estimate");
+  session.Rebin(false);
+  Check(EstimatedBackground(&canvas, &hist) && EstimatedBackground(&canvas, &hist)->GetNbinsX() == hist.GetNbinsX(),
+    "rebin recalculates the enabled background on the new bin grid");
+  session.Rebin(true);
   request.config.background = PhotoPeakBackgroundMode::None;
   Check(session.ReplaceRequest(request), "disable background preview");
   session.ShowBackground();
-  Check(!canvas.GetListOfPrimitives()->FindObject("PhotoPeakSession_background"), "None clears preview");
+  Check(!EstimatedBackground(&canvas, &hist), "None clears the background estimate");
   session.Rebin(false);
   Check(session.State().rebinFactor == 2 && session.State().resultRevision != session.State().revision,
     "rebin invalidates previous result");
@@ -754,6 +925,12 @@ void RealSpectra(const char* path) {
     auto result = PhotoPeakFitter::Fit(hist, 330, 357, 344, config, pad, true);
     Check(result.status == 0 && result.parameters[kPhotoPeakPosition] > 340 &&
       result.parameters[kPhotoPeakPosition] < 348, "real spectrum peak fit");
+    config.mode = PhotoPeakFitMode::Auto;
+    config.background = PhotoPeakBackgroundMode::Global;
+    result = PhotoPeakFitter::Fit(hist, 330, 357, 344, config, pad, true);
+    Check(result.status == 0 && result.backgroundSubtracted &&
+      result.parameters[kPhotoPeakPosition] > 340 && result.parameters[kPhotoPeakPosition] < 348,
+      "real spectrum Auto fit includes the Global background");
   }
   PhotoPeakFit::StopAll();
   Check(Markers(canvas.GetPad(1)) == 0 && Markers(canvas.GetPad(2)) == 0,
@@ -781,6 +958,7 @@ int main(int argc, char** argv) {
     } else {
       FitNumerics();
       PeakDrawing();
+      BackgroundFits();
       RootInteraction();
       Lifecycle();
       SessionState();

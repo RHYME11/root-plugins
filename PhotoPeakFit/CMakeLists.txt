@@ -10,6 +10,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}"
 
 add_library(PhotoPeakFit SHARED
   common/PhotoPeakConfig.cxx
+  common/PhotoPeakBackground.cxx
   common/PhotoPeakFitResult.cxx
   common/PhotoPeakFitter.cxx
   session/PhotoPeakSession.cxx
@@ -24,7 +25,7 @@ target_compile_features(PhotoPeakFit PUBLIC cxx_std_17)
 target_include_directories(PhotoPeakFit PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE gui session
+  PRIVATE common gui session
 )
 target_link_libraries(PhotoPeakFit PUBLIC
   ROOT::Core ROOT::RIO ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui

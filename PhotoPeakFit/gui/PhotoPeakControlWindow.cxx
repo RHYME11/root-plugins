@@ -42,15 +42,15 @@ enum ControlId {
   kRelativeFwhm,
   kPeakList = 110,
   kPickPeaks,
-  kSetRange,
-  kBrowse,
+  kBrowse = 113,
   kDeletePeak,
   kRebin = 120,
   kUndoRebin,
   kPanLeft,
   kPanRight,
   kUnzoom,
-  kPreview,
+  kUpdateBackground,
+  kDisableBackground,
   kBackDecreasingWindow = 500,
   kBackIncreasingWindow,
   kBackOrder2,
@@ -175,10 +175,12 @@ public:
   TGCheckButton* relativePosition = nullptr;
   TGCheckButton* relativeFwhm = nullptr;
   TGTextButton* backgroundOptions = nullptr;
+  TGTextButton* updateBackground = nullptr;
+  TGTextButton* disableBackground = nullptr;
   std::unique_ptr<TGPopupMenu> backgroundOptionMenu;
   std::array<std::unique_ptr<PhotoPeakParameterRow>, 3> peakRows;
   std::array<std::unique_ptr<PhotoPeakParameterRow>, 7> globals;
-  std::array<TGTextButton*, 3> tools{};
+  std::array<TGTextButton*, 2> tools{};
   TGTextView* results = nullptr;
   std::uint64_t editedPeak = 0;
   bool dirty = false;
@@ -215,8 +217,7 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   AddFrame(fImpl->target, new TGLayoutHints(kLHintsExpandX, 8, 8, 6, 2));
   auto* tools = new TGHorizontalFrame(this);
   fImpl->tools[0] = addButton(tools, "Pick peaks", kPickPeaks);
-  fImpl->tools[1] = addButton(tools, "Set range", kSetRange);
-  fImpl->tools[2] = addButton(tools, "Browse", kBrowse);
+  fImpl->tools[1] = addButton(tools, "Browse", kBrowse);
   AddFrame(tools, new TGLayoutHints(kLHintsExpandX, 5, 5));
   auto* range = new TGHorizontalFrame(this);
   range->AddFrame(new TGLabel(range, "Fit low"), new TGLayoutHints(kLHintsCenterY, 4, 4, 4, 4));
@@ -277,7 +278,7 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   shape->AddFrame(advanced, new TGLayoutHints(kLHintsExpandX, 6, 6, 4, 6));
 
   auto* background = fImpl->tabs->AddTab("Background");
-  background->AddFrame(new TGLabel(background, "TSpectrum preview (separate from fit background)"),
+  background->AddFrame(new TGLabel(background, "TSpectrum background used by Fit"),
     new TGLayoutHints(kLHintsLeft, 6, 4, 6, 4));
   fImpl->background = new TGComboBox(background, kBackground);
   fImpl->background->AddEntry("None", 0);
@@ -294,9 +295,12 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   for(const auto& option : kBackgroundOptionList)
     fImpl->backgroundOptionMenu->AddEntry(option.token, option.id);
   fImpl->backgroundOptionMenu->Associate(this);
-  addButton(background, "Preview / clear (b)", kPreview);
+  auto* backgroundActions = new TGHorizontalFrame(background);
+  fImpl->updateBackground = addButton(backgroundActions, "Update background (b)", kUpdateBackground);
+  fImpl->disableBackground = addButton(backgroundActions, "Disable background", kDisableBackground);
+  background->AddFrame(backgroundActions, new TGLayoutHints(kLHintsExpandX, 3, 3, 3, 3));
   auto* note = new TGLabel(background,
-    "None clears the preview. Local uses the specified range.\nGlobal estimates the entire spectrum. A/B/C in Shape\ncontrol the background used by the fit model.");
+    "Local / Global enables background subtraction for Fit.\nThe thick green line is the estimated background.\nFit curves include it on the original spectrum.\nA/B/C in Shape adjust the remaining background.");
   note->SetTextJustify(kTextLeft);
   background->AddFrame(note, new TGLayoutHints(kLHintsLeft, 6, 6, 8, 4));
 
@@ -451,13 +455,18 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
     case kDeletePeak: fImpl->session->RemoveSelectedPeak(); break;
     case kPeakList: fImpl->session->SelectPeak(static_cast<std::uint64_t>(parameter2)); break;
     case kPickPeaks: fImpl->session->SetInteraction(PhotoPeakInteraction::Peaks); break;
-    case kSetRange: fImpl->session->SetInteraction(PhotoPeakInteraction::Range); break;
     case kRebin: fImpl->session->Rebin(false); break;
     case kUndoRebin: fImpl->session->Rebin(true); break;
     case kPanLeft: fImpl->session->Pan(-1); break;
     case kPanRight: fImpl->session->Pan(1); break;
     case kUnzoom: fImpl->session->Unzoom(); break;
-    case kPreview: fImpl->session->ShowBackground(); break;
+    case kUpdateBackground: fImpl->session->ShowBackground(); break;
+    case kDisableBackground: {
+      auto request = fImpl->session->State().request;
+      request.config.background = PhotoPeakBackgroundMode::None;
+      fImpl->session->ReplaceRequest(request);
+      break;
+    }
     default: break;
   }
   return kTRUE;
@@ -486,7 +495,7 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
   fImpl->target->SetText(TString::Format("Target: %s | Canvas: %s / %s | Rebin: x%d",
     fImpl->session->Histogram()->GetName(), fImpl->session->Canvas()->GetName(),
     fImpl->session->Pad()->GetName(), state.rebinFactor));
-  for(int index = 0; index < 3; ++index) {
+  for(std::size_t index = 0; index < fImpl->tools.size(); ++index) {
     const bool active = static_cast<int>(state.interaction) == index;
     fImpl->tools[index]->SetState(active ? kButtonDown : kButtonUp, false);
   }
@@ -502,7 +511,8 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
       << "\nRebin at fit: x" << state.fittedRebinFactor
       << "\nChi2 / NDF: " << state.result.chi2 << " / " << state.result.ndf
       << "\nReduced chi2: " << state.result.reducedChi2 << "\n";
-    output << "\n" << state.result.GlobalParameterReport();
+    output << "\n" << state.result.BackgroundReport()
+      << "\n" << state.result.GlobalParameterReport();
     for(std::size_t index = 0; index < state.result.peaks.size(); ++index) {
       const auto& peak = state.result.peaks[index];
       const auto id = index < state.fittedRequest.peaks.size() ? state.fittedRequest.peaks[index].id : index + 1;
@@ -577,6 +587,8 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
     fImpl->backgroundOptions->SetText(TString::Format("Options (%zu)", std::count_if(std::begin(kBackgroundOptionList),
       std::end(kBackgroundOptionList), [&](const auto& option) { return fImpl->backgroundOptionMenu->IsEntryChecked(option.id); })));
     const bool backgroundEnabled = request.config.background != PhotoPeakBackgroundMode::None;
+    fImpl->updateBackground->SetEnabled(backgroundEnabled);
+    fImpl->disableBackground->SetEnabled(backgroundEnabled);
     fImpl->backgroundIterations->SetEnabled(backgroundEnabled);
     fImpl->backgroundOptions->SetEnabled(backgroundEnabled);
     fImpl->backgroundLow->SetEnabled(request.config.background == PhotoPeakBackgroundMode::Local);
