@@ -588,6 +588,14 @@ void PhotoPeakControlWindow::Show() {
   for(auto& row : fImpl->globals)
     row->Update();
   Resize(GetDefaultSize());
+  Layout();
+  fImpl->tabs->Layout();
+  for(int index = 0; index < fImpl->tabs->GetNumberOfTabs(); ++index)
+    fImpl->tabs->GetTabContainer(index)->Layout();
+  // Mapping exposes internal scrollbars even when their size has not changed.
+  // Explicit layout restores their visibility and geometry before the first paint.
+  fImpl->peakList->Layout();
+  fImpl->results->Layout();
   MapWindow();
   RaiseWindow();
 }

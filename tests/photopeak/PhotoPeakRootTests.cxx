@@ -15,6 +15,7 @@
 #include <TApplication.h>
 #include <TCanvas.h>
 #include <TFile.h>
+#include <TF1.h>
 #include <TGButton.h>
 #include <TGClient.h>
 #include <TGComboBox.h>
@@ -22,6 +23,7 @@
 #include <TGTab.h>
 #include <TGTextEntry.h>
 #include <TGTextView.h>
+#include <TGScrollBar.h>
 #include <TH1D.h>
 #include <TH2D.h>
 #include <THashList.h>
@@ -31,6 +33,7 @@
 #include <TMarker.h>
 #include <TROOT.h>
 #include <TSystem.h>
+#include <TString.h>
 #include <TVirtualFitter.h>
 #include <TVirtualX.h>
 
@@ -121,6 +124,61 @@ void FitNumerics() {
   Check(std::fabs(result.peaks[0].centroid - 100) < 0.05 &&
     std::fabs(result.peaks[1].centroid - 110) < 0.05, "multiple peak centroids");
   session.ExitMode();
+}
+
+// ============== PeakDrawing ==============
+// Purpose: Check component curves share the fitted background without changing fit results.
+// Inputs: Deterministic doublet and low/high-stat modes. Outputs: Curve identities and cleanup checks.
+void PeakDrawing() {
+  TH1D hist("componentHist", "componentHist", 1000, 0, 200);
+  FillSpectrum(hist, true);
+  TCanvas canvas("componentCanvas", "componentCanvas", 800, 600);
+  hist.GetXaxis()->SetRangeUser(85, 125);
+  hist.Draw();
+  canvas.Update();
+  Check(PhotoPeakFit::Start(&hist, &canvas), "component drawing session");
+  PhotoPeakFitRequest request;
+  request.fitLow = 90;
+  request.fitHigh = 120;
+  for(double centroid : {100.0, 110.0}) {
+    PhotoPeakSeed seed;
+    seed.centroid.value = centroid;
+    seed.height.value = centroid == 100.0 ? 1000 : 700;
+    seed.fwhm.value = 3.5;
+    request.peaks.push_back(seed);
+  }
+  for(auto mode : {PhotoPeakFitMode::LowStat, PhotoPeakFitMode::HighStat}) {
+    request.config.mode = mode;
+    request.config.relativePosition = mode == PhotoPeakFitMode::HighStat;
+    request.config.global[kPhotoPeakR] = {10, PhotoPeakParameterMode::Fixed, 0, 100};
+    request.config.global[kPhotoPeakBeta] = {2, PhotoPeakParameterMode::Fixed, 0, 10};
+    request.config.global[kPhotoPeakStep] = {4, PhotoPeakParameterMode::Fixed, 0, 100};
+    request.config.global[kPhotoPeakC] = {0, PhotoPeakParameterMode::Fixed, 0, 0};
+    const auto baseline = PhotoPeakFitter::Fit(&hist, request, nullptr, false);
+    const auto drawn = PhotoPeakFitter::Fit(&hist, request, &canvas, true);
+    Check(drawn.model == baseline.model && drawn.status == baseline.status &&
+      std::fabs(drawn.area - baseline.area) < 1e-8 * std::max(1.0, baseline.area) &&
+      std::fabs(drawn.areaError - baseline.areaError) < 1e-8 * std::max(1.0, baseline.areaError),
+      "drawing preserves numerical fit and peak-only area");
+    const TString prefix = TString::Format("PhotoPeak_%p_", static_cast<void*>(&hist));
+    auto* total = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "total_fit"));
+    auto* background = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "background_fit"));
+    auto* first = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_0"));
+    auto* second = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_1"));
+    Check(total && background && first && second, "drawn total, background and components exist");
+    Check(background->Eval(100) > 1, "test has a nonzero fitted background");
+    for(double x : {90.0, 97.0, 100.0, 103.0, 106.0, 110.0, 115.0, 120.0}) {
+      const double reconstructed = first->Eval(x) + second->Eval(x) - background->Eval(x);
+      Check(std::fabs(reconstructed - total->Eval(x)) < 1e-8 * std::max(1.0, std::fabs(total->Eval(x))),
+        "sum of components minus duplicated common background equals total");
+      Check(first->Eval(x) >= background->Eval(x) - 1e-8 &&
+        second->Eval(x) >= background->Eval(x) - 1e-8, "components sit above the full fitted background");
+    }
+  }
+  Check(PhotoPeakFit::Stop(&canvas), "component session exits");
+  TIter remaining(canvas.GetListOfPrimitives());
+  while(auto* object = remaining())
+    Check(std::string(object->GetName()).find("PhotoPeak_") != 0, "component drawings cleaned on exit");
 }
 
 // ============== RootInteraction ==============
@@ -363,6 +421,19 @@ void GuiControls() {
     }
   }
   Check(window, "English control window created");
+  auto* initialList = FindWidget<TGListBox>(window, 110);
+  auto* initialResults = FindWidget<TGTextView>(window, -1);
+  Check(initialList && !initialList->GetScrollBar()->IsMapped(),
+    "empty peak list has no mapped scrollbar on first show");
+  Check(initialResults, "results view exists on first show");
+  TIter resultChildren(initialResults->GetList());
+  while(auto* element = static_cast<TGFrameElement*>(resultChildren())) {
+    if(auto* scrollbar = dynamic_cast<TGScrollBar*>(element->fFrame))
+      Check(!scrollbar->IsMapped(), "empty results view has no mapped scrollbar on first show");
+  }
+  window->Hide();
+  window->Show();
+  Check(!initialList->GetScrollBar()->IsMapped(), "raising an empty panel does not remap its scrollbar");
   CheckLayout(window);
   TIter frames(window->GetList());
   while(auto* element = static_cast<TGFrameElement*>(frames())) {
@@ -385,6 +456,11 @@ void GuiControls() {
   auto* mode = FindWidget<TGComboBox>(window, 105);
   auto* range = FindWidget<TGTextEntry>(window, 10);
   Check(list && centroid && fwhm && mode && range, "peak list and selected-peak editors exist");
+  auto* scrollbar = list->GetScrollBar();
+  Check(scrollbar->IsMapped() && scrollbar->GetX() >= 0 && scrollbar->GetY() >= 0 &&
+    scrollbar->GetX() + scrollbar->GetWidth() <= list->GetWidth() &&
+    scrollbar->GetY() + scrollbar->GetHeight() <= list->GetHeight(),
+    "populated peak list has a scrollbar inside its own bounds");
   const auto id = session.State().selectedPeak;
   const Long_t button = MK_MSG(kC_COMMAND, kCM_BUTTON);
   const Long_t edited = MK_MSG(kC_TEXTENTRY, kTE_TEXTCHANGED);
@@ -623,6 +699,7 @@ int main(int argc, char** argv) {
       RealSpectra(argv[2]);
     } else {
       FitNumerics();
+      PeakDrawing();
       RootInteraction();
       Lifecycle();
       SessionState();

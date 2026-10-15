@@ -126,6 +126,12 @@ its old fit drawings; selecting a peak or changing the view does not invalidate
 it. Fit failure, unapplied edits, and a current successful result have distinct
 status messages. Results do not overwrite the initial parameter values.
 
+Multi-peak plots draw each colored component as the common fitted background plus
+that peak's contribution. All components share the dashed black background,
+including its polynomial and enabled smoothed-step terms. The red total curve
+contains the background and all peaks. Reported peak areas and their errors
+continue to describe the peak contribution alone.
+
 TSpectrum is a **preview**, separate from the A/B/C background used by the fitting
 model. None clears the preview, Local uses its specified range, and Global uses
 the entire spectrum regardless of the current zoom. Iteration count and all
@@ -192,7 +198,8 @@ ctest --test-dir tests/root-build --output-on-failure
 The tests cover numerical single/multiple peak fits, actual canvas signal
 connections, target selection, independent pads, shortcuts, logarithmic
 coordinates, drawing/object removal, shutdown, stable peak IDs, stored mode preferences,
-result snapshots and invalidation, and local/global background previews. When
+result snapshots and invalidation, local/global background previews, and
+background-offset component curves with unchanged numerical areas. When
 `tests/hist_fragment62276.root` is present, a separate test fits its
 `Array16/energy` and `Array17/energy` spectra read-only.
 
@@ -204,5 +211,6 @@ tests/root-build/photopeak-tests/photopeak_tests --gui
 
 This additionally checks the English control window with 25 peaks, stable
 selection after sorting, invalid draft retention, mode switching, Fit button/key
-equivalence, Delete, Clean, and close actions. Test data, generated libraries, and logs stay ignored;
+equivalence, Delete, Clean, close actions, and scrollbar visibility on first
+display and reopening. Test data, generated libraries, and logs stay ignored;
 only focused test source files are versioned.

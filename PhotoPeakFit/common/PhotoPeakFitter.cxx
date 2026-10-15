@@ -923,7 +923,8 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
         const auto& peak = output.peaks[index];
         const int color = kBlue + static_cast<int>(index % 4);
         auto componentEvaluator = [index, bestCandidate, fittedParameters,
-                                   config, positionOffsets, referenceWidths]
+                                   config, positionOffsets, referenceWidths,
+                                   backgroundEvaluator]
           (double* x, double*) {
             const int offset = peakBase + 3 * static_cast<int>(index);
             const double position = config.relativePosition ?
@@ -948,7 +949,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
               }
             }
             const double fraction = fittedParameters[kPhotoPeakR] / 100.0;
-            return fittedParameters[offset + 2] *
+            return backgroundEvaluator(x, nullptr) + fittedParameters[offset + 2] *
               ((1.0 - fraction) * gaussian + fraction * skew);
           };
         auto* component = new TF1(TString::Format(
@@ -959,7 +960,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
         component->SetNpx(2000);
         component->Draw("same");
         legend->AddEntry(component,
-          TString::Format("peak %zu", index + 1).Data(), "l");
+          TString::Format("peak %zu + background", index + 1).Data(), "l");
         auto* label = new TLatex(peak.centroid,
           hist->GetMaximum() * (0.72 + 0.04 * (index % 4)),
           TString::Format("%.3f", peak.centroid).Data());
