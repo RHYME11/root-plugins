@@ -79,13 +79,16 @@ visible. Four pages organize the settings:
 | Peaks | Scrollable peak list, Add/Delete, selected centroid/height/FWHM, Auto/HighStat/LowStat, relative position and relative FWHM |
 | Shape | R, BETA, STEP, A, B, C, WSCALE, and advanced ROOT fit options |
 | Background | TSpectrum preview scope, iterations, local range, and background options |
-| Results | Model, fit status, chi2/NDF, per-peak values and errors, and total area |
+| Results | Model, fit status, chi2/NDF, fitted R/BETA/STEP/A/B/C, active WSCALE, per-peak values and errors, and total area |
 
 Every parameter has a Value and a mutually exclusive Free/Fixed/Limited mode.
 Limited mode expands Lower/Upper fields. Inactive settings retain their stored
 values: for example, LowStat applies its parameter restrictions to the fit without
 replacing the user's HighStat settings. Relative position uses the lowest-centroid
 seed as its reference; relative FWHM uses the stored seed widths and WSCALE.
+Its checkbox stays checked when individual FWHM editors are disabled. With fewer
+than two peaks, relative settings are inactive and their checkboxes retain the
+stored preference.
 
 Peak identities remain stable when their centroids are edited, dragged, or sorted.
 Selecting a peak in the list highlights its canvas marker and opens its editor.
@@ -125,12 +128,17 @@ initial seeds. Input or binning changes mark that result out of date and remove
 its old fit drawings; selecting a peak or changing the view does not invalidate
 it. Fit failure, unapplied edits, and a current successful result have distinct
 status messages. Results do not overwrite the initial parameter values.
+The panel repaints the latest result when fitting finishes, without another
+click or tab change. Both the panel and terminal report fitted shared parameters
+and their uncertainties; these are separate from the stored initial settings.
 
 Multi-peak plots draw each colored component as the common fitted background plus
 that peak's contribution. All components share the dashed black background,
 including its polynomial and enabled smoothed-step terms. The red total curve
 contains the background and all peaks. Reported peak areas and their errors
 continue to describe the peak contribution alone.
+The legend contains only a colored line and the fitted centroid (three decimal
+places) for each peak, including single-peak fits.
 
 TSpectrum is a **preview**, separate from the A/B/C background used by the fitting
 model. None clears the preview, Local uses its specified range, and Global uses
@@ -151,7 +159,8 @@ PhotoPeakFit::Stop(gPad);
 PhotoPeakFit::StopAll();
 ```
 
-Clean retains fit settings and the current binning. Exiting removes PhotoPeak
+Clean retains fit settings and the current binning, and restarts peak numbering
+at 1 for the next selection. Exiting removes PhotoPeak
 drawings and releases its histogram clone and retained fitter. Re-entry creates a
 fresh empty session. Removing the target drawing, deleting the target or subpad,
 or closing the canvas invalidates the session. Queued GUI commands are detached
@@ -199,7 +208,8 @@ The tests cover numerical single/multiple peak fits, actual canvas signal
 connections, target selection, independent pads, shortcuts, logarithmic
 coordinates, drawing/object removal, shutdown, stable peak IDs, stored mode preferences,
 result snapshots and invalidation, local/global background previews, and
-background-offset component curves with unchanged numerical areas. When
+background-offset component curves with unchanged numerical areas, fitted shared
+parameters, centroid-only legends, and numbering resets after repeated Clean. When
 `tests/hist_fragment62276.root` is present, a separate test fits its
 `Array16/energy` and `Array17/energy` spectra read-only.
 
@@ -212,5 +222,6 @@ tests/root-build/photopeak-tests/photopeak_tests --gui
 This additionally checks the English control window with 25 peaks, stable
 selection after sorting, invalid draft retention, mode switching, Fit button/key
 equivalence, Delete, Clean, close actions, and scrollbar visibility on first
-display and reopening. Test data, generated libraries, and logs stay ignored;
+display and reopening, relative-width checkbox/editor consistency, and immediate
+result updates after fitting and refitting. Test data, generated libraries, and logs stay ignored;
 only focused test source files are versioned.

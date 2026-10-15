@@ -21,6 +21,7 @@
 #include <TGComboBox.h>
 #include <TGListBox.h>
 #include <TGTab.h>
+#include <TGText.h>
 #include <TGTextEntry.h>
 #include <TGTextView.h>
 #include <TGScrollBar.h>
@@ -29,6 +30,8 @@
 #include <THashList.h>
 #include <TKey.h>
 #include <TLine.h>
+#include <TLegend.h>
+#include <TLegendEntry.h>
 #include <TList.h>
 #include <TMarker.h>
 #include <TROOT.h>
@@ -94,6 +97,24 @@ void FillSpectrum(TH1D& hist, bool multiple = false) {
       y += 700.0 * std::exp(-0.5 * std::pow((x - 110.0) / 1.5, 2));
     hist.SetBinContent(bin, y);
     hist.SetBinError(bin, std::sqrt(y));
+  }
+}
+
+// ============== CheckLegend ==============
+// Purpose: Check that only fitted centroids identify the colored peak curves.
+// Inputs: Drawn pad, histogram and fit snapshot. Outputs: Checked labels and curve references.
+void CheckLegend(TVirtualPad* pad, TH1* hist, const PhotoPeakFitResult& result) {
+  const TString prefix = TString::Format("PhotoPeak_%p_", static_cast<void*>(hist));
+  auto* legend = dynamic_cast<TLegend*>(pad->GetListOfPrimitives()->FindObject(prefix + "legend"));
+  Check(legend && legend->GetListOfPrimitives()->GetSize() == static_cast<int>(result.peaks.size()),
+    "legend contains one entry per fitted peak");
+  for(std::size_t index = 0; index < result.peaks.size(); ++index) {
+    auto* entry = dynamic_cast<TLegendEntry*>(legend->GetListOfPrimitives()->At(index));
+    const TString curve = result.peaks.size() == 1 ? prefix + "total_fit" :
+      prefix + TString::Format("component_%zu", index);
+    Check(entry && entry->GetObject() == pad->GetListOfPrimitives()->FindObject(curve) &&
+      std::string(entry->GetLabel()) == TString::Format("%.3f", result.peaks[index].centroid).Data() &&
+      std::string(entry->GetOption()) == "l", "legend uses only the peak curve and fitted centroid");
   }
 }
 
@@ -166,6 +187,18 @@ void PeakDrawing() {
     auto* first = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_0"));
     auto* second = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_1"));
     Check(total && background && first && second, "drawn total, background and components exist");
+    CheckLegend(&canvas, &hist, drawn);
+    for(int parameter = kPhotoPeakA; parameter <= kPhotoPeakStep; ++parameter) {
+      Check(drawn.parameters[parameter] == total->GetParameter(parameter) &&
+        drawn.errors[parameter] == total->GetParError(parameter),
+        "multi-peak result retains fitted globals and uncertainties");
+    }
+    Check(drawn.relativeFwhm && drawn.widthScale == total->GetParameter(6) &&
+      drawn.widthScaleError == total->GetParError(6), "result retains the fitted width scale");
+    const std::string globals = drawn.GlobalParameterReport();
+    for(const char* name : {"R", "BETA", "STEP", "A", "B", "C", "WSCALE"})
+      Check(globals.find(std::string("  ") + name + ": ") != std::string::npos,
+        "shared report includes every global parameter");
     Check(background->Eval(100) > 1, "test has a nonzero fitted background");
     for(double x : {90.0, 97.0, 100.0, 103.0, 106.0, 110.0, 115.0, 120.0}) {
       const double reconstructed = first->Eval(x) + second->Eval(x) - background->Eval(x);
@@ -175,6 +208,11 @@ void PeakDrawing() {
         second->Eval(x) >= background->Eval(x) - 1e-8, "components sit above the full fitted background");
     }
   }
+  request.peaks.resize(1);
+  const auto single = PhotoPeakFitter::Fit(&hist, request, &canvas, true);
+  CheckLegend(&canvas, &hist, single);
+  Check(!single.relativeFwhm && single.GlobalParameterReport().find("WSCALE") == std::string::npos,
+    "single-peak report omits the unused width scale");
   Check(PhotoPeakFit::Stop(&canvas), "component session exits");
   TIter remaining(canvas.GetListOfPrimitives());
   while(auto* object = remaining())
@@ -426,6 +464,9 @@ void GuiControls() {
   Check(initialList && !initialList->GetScrollBar()->IsMapped(),
     "empty peak list has no mapped scrollbar on first show");
   Check(initialResults, "results view exists on first show");
+  auto* relativeFwhm = FindWidget<TGCheckButton>(window, 109);
+  Check(relativeFwhm && !relativeFwhm->IsEnabled() && relativeFwhm->IsDisabledAndSelected(),
+    "stored relative-width preference is visibly checked while inactive");
   TIter resultChildren(initialResults->GetList());
   while(auto* element = static_cast<TGFrameElement*>(resultChildren())) {
     if(auto* scrollbar = dynamic_cast<TGScrollBar*>(element->fFrame))
@@ -456,6 +497,18 @@ void GuiControls() {
   auto* mode = FindWidget<TGComboBox>(window, 105);
   auto* range = FindWidget<TGTextEntry>(window, 10);
   Check(list && centroid && fwhm && mode && range, "peak list and selected-peak editors exist");
+  Check(relativeFwhm->IsEnabled() && relativeFwhm->IsOn() && !fwhm->IsEnabled(),
+    "checked relative FWHM explains the disabled individual-width editor");
+  relativeFwhm->SetState(kButtonUp, false);
+  window->ProcessMessage(MK_MSG(kC_COMMAND, kCM_CHECKBUTTON), 109, 0);
+  Check(!session.State().request.config.relativeFwhm && !relativeFwhm->IsOn() && fwhm->IsEnabled(),
+    "unchecking relative FWHM enables individual widths");
+  window->Refresh();
+  Check(!relativeFwhm->IsOn() && fwhm->IsEnabled(), "refresh retains the unchecked width preference");
+  relativeFwhm->SetState(kButtonDown, false);
+  window->ProcessMessage(MK_MSG(kC_COMMAND, kCM_CHECKBUTTON), 109, 0);
+  Check(session.State().request.config.relativeFwhm && relativeFwhm->IsOn() && !fwhm->IsEnabled(),
+    "checking relative FWHM restores the shared-width state");
   auto* scrollbar = list->GetScrollBar();
   Check(scrollbar->IsMapped() && scrollbar->GetX() >= 0 && scrollbar->GetY() >= 0 &&
     scrollbar->GetX() + scrollbar->GetWidth() <= list->GetWidth() &&
@@ -507,18 +560,36 @@ void GuiControls() {
   Check(session.State().request.peaks.empty() && Markers(&canvas) == 0,
     "Clean discards invalid drafts and all selections");
   session.AddPeak(100);
+  Check(session.State().selectedPeak == 1 && list->GetSelected() == 1,
+    "Clean restarts peak numbering in the session and visible list");
   mode->Select(2, false);
   window->ProcessMessage(MK_MSG(kC_COMMAND, kCM_COMBOBOX), 105, 2);
+  Check(session.State().request.config.relativeFwhm && relativeFwhm->IsDisabledAndSelected() && fwhm->IsEnabled(),
+    "editing a single peak preserves the inactive shared-width preference");
+  auto* tabs = FindWidget<TGTab>(window, -1);
+  Check(tabs, "result tab control exists");
+  tabs->SetTab(3, false);
   centroid->SetText("100.2", false);
   window->ProcessMessage(edited, 1000, 0);
   session.HandleEvent(fitKey);
   Check(session.State().hasResult && session.State().fittedRequest.peaks.front().centroid.value == 100.2,
     "canvas Fit commits the same real editor as Fit button");
   Check(session.State().result.status == 0, "GUI-driven fit converges");
+  std::string resultText = initialResults->GetText()->AsString().Data();
+  Check(resultText.find(session.State().result.GlobalParameterReport()) != std::string::npos &&
+    resultText.find("Centroid: ") != std::string::npos && resultText.find("No fit result") == std::string::npos,
+    "visible Results contains the completed snapshot before any further event or interaction");
   const double shortcutCentroid = session.State().result.peaks.front().centroid;
   window->ProcessMessage(button, 100, 0);
   Check(std::fabs(session.State().result.peaks.front().centroid - shortcutCentroid) < 1e-8,
     "button and shortcut fit identical inputs");
+  auto request = session.State().request;
+  request.peaks.front().centroid = {100.4, PhotoPeakParameterMode::Fixed, 0, 0};
+  Check(session.ReplaceRequest(request), "change the next fit to a distinct fixed centroid");
+  window->ProcessMessage(button, 100, 0);
+  resultText = initialResults->GetText()->AsString().Data();
+  Check(resultText.find("Centroid: 100.4 +/- 0") != std::string::npos && tabs->GetCurrent() == 3,
+    "refit immediately replaces visible Results while preserving the selected tab");
   window->CloseWindow();
   Check(session.IsClosed(), "window close exits session");
   gSystem->ProcessEvents();
@@ -647,6 +718,16 @@ void SessionState() {
   session.Clean();
   Check(!session.State().hasResult && session.State().request.config.mode == PhotoPeakFitMode::LowStat &&
     session.State().request.config.global[kPhotoPeakR].value == 10, "Clean retains stored settings");
+  for(int cycle = 0; cycle < 3; ++cycle) {
+    session.AddPeak(110);
+    session.AddPeak(100);
+    Check(session.State().request.peaks.size() == 2 &&
+      session.State().request.peaks.front().id == 2 && session.State().request.peaks.back().id == 1,
+      "each Clean starts a new selection with IDs one and two, independent of sorting");
+    session.Clean();
+    Check(session.State().request.peaks.empty() && session.State().selectedPeak == 0 && Markers(&canvas) == 0,
+      "repeated Clean removes every prior seed and marker");
+  }
   session.ExitMode();
 }
 

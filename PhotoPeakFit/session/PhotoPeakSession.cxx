@@ -404,6 +404,7 @@ void PhotoPeakSession::Clean() {
   if(fMarkers)
     fMarkers->Clear();
   fState.request.peaks.clear();
+  fNextPeakId = 1;
   fState.selectedPeak = 0;
   fState.rangeVisible = false;
   fState.hasResult = false;

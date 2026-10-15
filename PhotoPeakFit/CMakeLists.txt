@@ -10,6 +10,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}"
 
 add_library(PhotoPeakFit SHARED
   common/PhotoPeakConfig.cxx
+  common/PhotoPeakFitResult.cxx
   common/PhotoPeakFitter.cxx
   session/PhotoPeakSession.cxx
   session/PhotoPeakTarget.cxx

@@ -30,6 +30,9 @@ struct PhotoPeakFitResult {
   double areaError = 0.0;
   std::array<double, kPhotoPeakNPars> parameters{};
   std::array<double, kPhotoPeakNPars> errors{};
+  bool relativeFwhm = false;
+  double widthScale = 1.0;
+  double widthScaleError = 0.0;
   struct Peak {
     double centroid = 0.0;
     double centroidError = 0.0;
@@ -41,6 +44,8 @@ struct PhotoPeakFitResult {
     double areaError = 0.0;
   };
   std::vector<Peak> peaks;
+
+  std::string GlobalParameterReport() const;
 };
 
 #endif

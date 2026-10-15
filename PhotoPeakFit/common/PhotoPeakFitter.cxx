@@ -315,16 +315,14 @@ void RemovePreviousDrawObjects(TVirtualPad* pad, TH1* hist) {
 }
 
 // ============== PrintResult ==============
-// Purpose: Print the minimal fit result in PhotoPeakFit.C format.
+// Purpose: Print single-peak values and shared fitted parameters.
 // Inputs: Histogram, fit inputs, and result.
 // Outputs: Flushed terminal report.
 void PrintResult(TH1* hist, double fitLow, double fitHigh, double peak0,
                  const PhotoPeakFitConfig& config,
                  const PhotoPeakFitResult& result) {
-  const int order[kPhotoPeakNPars] = {
-    kPhotoPeakPosition, kPhotoPeakHeight, kPhotoPeakFwhm,
-    kPhotoPeakR, kPhotoPeakBeta, kPhotoPeakStep,
-    kPhotoPeakA, kPhotoPeakB, kPhotoPeakC
+  const int order[] = {
+    kPhotoPeakPosition, kPhotoPeakHeight, kPhotoPeakFwhm
   };
   const char* names[kPhotoPeakNPars] = {
     "A", "B", "C", "R", "BETA", "STEP", "P", "W", "H"
@@ -358,7 +356,7 @@ void PrintResult(TH1* hist, double fitLow, double fitHigh, double peak0,
     std::printf("  %-5s = % .10g +/- %.10g\n", names[index],
                 result.parameters[index], result.errors[index]);
   }
-  std::printf("\n");
+  std::printf("\n%s\n", result.GlobalParameterReport().c_str());
   std::fflush(stdout);
 }
 
@@ -553,8 +551,8 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
     auto* legend = new TLegend(0.68, 0.76, 0.93, 0.9);
     legend->SetName(TString::Format("PhotoPeak_%p_legend",
                                    static_cast<void*>(hist)).Data());
-    legend->AddEntry(total, "total fit", "l");
-    legend->AddEntry(background, "background", "l");
+    legend->AddEntry(total,
+      TString::Format("%.3f", output.parameters[kPhotoPeakPosition]).Data(), "l");
     legend->Draw();
 
     auto* label = new TLatex(output.parameters[kPhotoPeakPosition],
@@ -796,7 +794,14 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
   output.ndf = total->GetNDF();
   output.reducedChi2 = output.ndf > 0 ? output.chi2 / output.ndf : 0.0;
   output.fitBins = BinCountInRange(hist, low, high);
-  output.freeParameters = parameterCount;
+  output.freeParameters = total->GetNumberFreeParameters();
+  for(int parameter = kPhotoPeakA; parameter <= kPhotoPeakStep; ++parameter) {
+    output.parameters[parameter] = total->GetParameter(parameter);
+    output.errors[parameter] = total->GetParError(parameter);
+  }
+  output.relativeFwhm = config.relativeFwhm;
+  output.widthScale = total->GetParameter(widthScaleIndex);
+  output.widthScaleError = total->GetParError(widthScaleIndex);
   std::vector<double> fittedParameters(parameterCount);
   for(int parameter = 0; parameter < parameterCount; ++parameter)
     fittedParameters[parameter] = total->GetParameter(parameter);
@@ -864,13 +869,23 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
   std::printf("\nmultipeakfit result for %s\n", hist->GetName());
   std::printf("Fitting function: %s\nFit status: %d\n", output.model.c_str(),
               output.status);
+  std::printf("Fit range: [%g, %g]\nFit bins = %d, free parameters = %d\n",
+              low, high, output.fitBins, output.freeParameters);
+  std::printf("chi2 = %.10g, ndf = %d\n", output.chi2, output.ndf);
+  std::printf("Relative position: %s\nRelative FWHM: %s\n",
+              config.relativePosition ? "true" : "false",
+              config.relativeFwhm ? "true" : "false");
+  std::printf("%s", output.GlobalParameterReport().c_str());
   for(std::size_t index = 0; index < output.peaks.size(); ++index) {
     const auto& peak = output.peaks[index];
     std::printf("  Peak %zu: P = %.10g +/- %.10g, W = %.10g +/- %.10g, "
-                "Area = %.10g +/- %.10g\n", index + 1, peak.centroid,
-                peak.centroidError, peak.fwhm, peak.fwhmError, peak.area,
+                "H = %.10g +/- %.10g, Area = %.10g +/- %.10g\n",
+                index + 1, peak.centroid, peak.centroidError,
+                peak.fwhm, peak.fwhmError, peak.height, peak.heightError, peak.area,
                 peak.areaError);
   }
+  std::printf("Total area = %.10g +/- %.10g\n\n", output.area, output.areaError);
+  std::fflush(stdout);
 
   if(draw) {
     TVirtualPad* targetPad = pad ? pad : gPad;
@@ -883,7 +898,6 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
       auto* legend = new TLegend(0.68, 0.72, 0.93, 0.9);
       legend->SetName(TString::Format("PhotoPeak_%p_legend",
                                      static_cast<void*>(hist)).Data());
-      legend->AddEntry(total, "total fit", "l");
       auto backgroundEvaluator = [midpoint, peakCount, bestCandidate,
                                   fittedParameters, config, positionOffsets,
                                   referenceWidths]
@@ -918,7 +932,6 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
       background->SetLineWidth(3);
       background->SetNpx(2000);
       background->Draw("same");
-      legend->AddEntry(background, "background", "l");
       for(std::size_t index = 0; index < output.peaks.size(); ++index) {
         const auto& peak = output.peaks[index];
         const int color = kBlue + static_cast<int>(index % 4);
@@ -960,7 +973,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
         component->SetNpx(2000);
         component->Draw("same");
         legend->AddEntry(component,
-          TString::Format("peak %zu + background", index + 1).Data(), "l");
+          TString::Format("%.3f", peak.centroid).Data(), "l");
         auto* label = new TLatex(peak.centroid,
           hist->GetMaximum() * (0.72 + 0.04 * (index % 4)),
           TString::Format("%.3f", peak.centroid).Data());

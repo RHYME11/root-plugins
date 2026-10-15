@@ -373,8 +373,10 @@ bool PhotoPeakControlWindow::CommitEdits() {
     request.config.background = static_cast<PhotoPeakBackgroundMode>(fImpl->background->GetSelected());
     request.config.backgroundOptions = BackgroundOptionsFromMenu(fImpl->backgroundOptionMenu.get());
     request.config.rootOptions = fImpl->rootOptions->GetText();
-    request.config.relativePosition = fImpl->relativePosition->IsOn();
-    request.config.relativeFwhm = fImpl->relativeFwhm->IsOn();
+    request.config.relativePosition = fImpl->relativePosition->IsOn() ||
+      fImpl->relativePosition->IsDisabledAndSelected();
+    request.config.relativeFwhm = fImpl->relativeFwhm->IsOn() ||
+      fImpl->relativeFwhm->IsDisabledAndSelected();
     valid = fImpl->session->ReplaceRequest(request);
   } else {
     fImpl->session->SetStatus(error);
@@ -500,6 +502,7 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
       << "\nRebin at fit: x" << state.fittedRebinFactor
       << "\nChi2 / NDF: " << state.result.chi2 << " / " << state.result.ndf
       << "\nReduced chi2: " << state.result.reducedChi2 << "\n";
+    output << "\n" << state.result.GlobalParameterReport();
     for(std::size_t index = 0; index < state.result.peaks.size(); ++index) {
       const auto& peak = state.result.peaks[index];
       const auto id = index < state.fittedRequest.peaks.size() ? state.fittedRequest.peaks[index].id : index + 1;
@@ -545,10 +548,15 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
     fImpl->peakRows[2]->SetEnabled(selected && (!multiple || !request.config.relativeFwhm));
     fImpl->mode->Select(static_cast<int>(request.config.mode), false);
     fImpl->rootOptions->SetText(request.config.rootOptions.c_str(), false);
-    fImpl->relativePosition->SetState(request.config.relativePosition ? kButtonDown : kButtonUp, false);
-    fImpl->relativeFwhm->SetState(request.config.relativeFwhm ? kButtonDown : kButtonUp, false);
     fImpl->relativePosition->SetEnabled(multiple);
     fImpl->relativeFwhm->SetEnabled(multiple);
+    if(multiple) {
+      fImpl->relativePosition->SetState(request.config.relativePosition ? kButtonDown : kButtonUp, false);
+      fImpl->relativeFwhm->SetState(request.config.relativeFwhm ? kButtonDown : kButtonUp, false);
+    } else {
+      fImpl->relativePosition->SetDisabledAndSelected(request.config.relativePosition);
+      fImpl->relativeFwhm->SetDisabledAndSelected(request.config.relativeFwhm);
+    }
     const int parameterMap[] = {kPhotoPeakR, kPhotoPeakBeta, kPhotoPeakStep, kPhotoPeakA, kPhotoPeakB, kPhotoPeakC};
     for(int index = 0; index < 6; ++index) {
       fImpl->globals[index]->Set(request.config.global[parameterMap[index]]);
@@ -576,6 +584,13 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
   }
   fImpl->refreshing = false;
   Layout();
+  if(IsMapped()) {
+    // Paint the completed snapshot before returning to a canvas callback.
+    gClient->NeedRedraw(fImpl->results, true);
+    gClient->NeedRedraw(fImpl->resultStatus, true);
+    gClient->NeedRedraw(fImpl->status, true);
+    gVirtualX->Update(1);
+  }
 }
 
 // ============== PhotoPeakControlWindow::Show ==============
