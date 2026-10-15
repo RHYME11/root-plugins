@@ -331,6 +331,8 @@ PhotoPeakControlWindow::~PhotoPeakControlWindow() {
 
 Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
                                                Long_t) {
+  if(!fImpl->session || !fImpl->session->ValidateTarget())
+    return kTRUE;
   if(GET_MSG(message) != kC_COMMAND)
     return TGMainFrame::ProcessMessage(message, parameter1, 0);
   auto readRequest = [&]() {
@@ -608,4 +610,13 @@ void PhotoPeakControlWindow::Show() {
 
 void PhotoPeakControlWindow::Hide() {
   UnmapWindow();
+}
+
+// ============== PhotoPeakControlWindow::DetachSession ==============
+// Purpose: Prevent queued GUI commands from using a discarded session.
+// Inputs: None.
+// Outputs: Detached session before event-loop window deletion.
+void PhotoPeakControlWindow::DetachSession() {
+  fImpl->session = nullptr;
+  Hide();
 }

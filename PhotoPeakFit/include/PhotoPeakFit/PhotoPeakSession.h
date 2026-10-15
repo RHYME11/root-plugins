@@ -1,7 +1,6 @@
 #ifndef __PHOTOPEAKSESSION_H__
 #define __PHOTOPEAKSESSION_H__
 
-#include <functional>
 #include <memory>
 
 #include <PhotoPeakFit/PhotoPeakSessionState.h>
@@ -33,10 +32,10 @@ class PhotoPeakSession {
     TH1* Histogram() const { return fHistogram; }
     const PhotoPeakSessionState& State() const { return fState; }
     bool IsClosed() const { return fState.closed; }
-    void SetExitCallback(std::function<void()> callback);
+    bool ValidateTarget();
+    void DetachTarget();
 
   private:
-    void Close();
     void RefreshMarkers();
     void RefreshGui();
     void Rebin(bool undo);
@@ -51,7 +50,6 @@ class PhotoPeakSession {
     std::unique_ptr<PhotoPeakControlWindow> fWindow;
     std::unique_ptr<PhotoPeakMarkerController> fMarkers;
     std::unique_ptr<PhotoPeakDrawController> fDrawing;
-    std::function<void()> fExitCallback;
     int fRangeClicks;
     int fDraggingRange;
     int fDraggingPeak;

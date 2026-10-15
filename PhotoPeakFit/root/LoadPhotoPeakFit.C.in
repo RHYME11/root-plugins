@@ -1,0 +1,19 @@
+#include <TInterpreter.h>
+#include <TString.h>
+#include <TSystem.h>
+
+// ============== LoadPhotoPeakFit ==============
+// Purpose: Load PhotoPeakFit and its public API from a build or install prefix.
+// Inputs: None; this macro stays beside the library and include directories.
+// Outputs: Loaded library and declarations, or a ROOT error diagnostic.
+void LoadPhotoPeakFit() {
+  const TString prefix = gSystem->DirName(__FILE__);
+  const TString library = prefix + "/@CMAKE_INSTALL_LIBDIR@/libPhotoPeakFit";
+  if(gSystem->Load(library) < 0) {
+    Error("LoadPhotoPeakFit", "cannot load %s", library.Data());
+    return;
+  }
+  gInterpreter->AddIncludePath(prefix + "/@CMAKE_INSTALL_INCLUDEDIR@");
+  if(!gInterpreter->Declare("#include <PhotoPeakFit/PhotoPeakRoot.h>"))
+    Error("LoadPhotoPeakFit", "cannot declare the PhotoPeakFit API");
+}

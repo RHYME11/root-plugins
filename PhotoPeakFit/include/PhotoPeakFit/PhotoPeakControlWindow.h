@@ -18,6 +18,7 @@ class PhotoPeakControlWindow : public TGMainFrame {
     void Refresh();
     void Show();
     void Hide();
+    void DetachSession();
 
   private:
     class Impl;

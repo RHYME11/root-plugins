@@ -1,6 +1,11 @@
 build/
 build-*/
-tests/
+tests/*
+!tests/photopeak/
+tests/photopeak/*
+!tests/photopeak/CMakeLists.txt
+!tests/photopeak/*.cxx
+!tests/photopeak/*.C
 
 *.o
 *.so

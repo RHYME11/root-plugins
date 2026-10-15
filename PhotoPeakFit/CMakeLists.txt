@@ -1,157 +1,61 @@
 cmake_minimum_required(VERSION 3.13)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  project(PhotoPeakFitPlugin
-    VERSION 0.1.0
-    LANGUAGES CXX
-  )
-  set(CMAKE_CXX_STANDARD 17)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
-  set(CMAKE_CXX_EXTENSIONS OFF)
+  project(PhotoPeakFit VERSION 0.2.0 LANGUAGES CXX)
 endif()
 
-find_package(ROOT REQUIRED COMPONENTS Core Hist Graf Gpad Gui Matrix MathCore Spectrum)
+find_package(ROOT REQUIRED COMPONENTS Core RIO Hist Graf Gpad Gui Matrix MathCore Spectrum)
 include(GNUInstallDirs)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
 
-set(GROOT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../groot" CACHE PATH
-  "Path to the Groot source tree"
-)
-set(GROOT_BUILD_DIR "${GROOT_SOURCE_DIR}/build" CACHE PATH
-  "Path to the Groot build tree"
-)
-
-if(NOT EXISTS "${GROOT_SOURCE_DIR}/include/Plugin/GPlugin.h")
-  message(FATAL_ERROR
-    "Groot Plugin API headers were not found under ${GROOT_SOURCE_DIR}/include"
-  )
-endif()
-
-find_library(GROOT_PLUGIN_LIBRARY
-  NAMES GPLUGIN
-  PATHS "${GROOT_BUILD_DIR}/lib"
-  NO_DEFAULT_PATH
-  REQUIRED
-)
-find_library(GROOT_LIBRARY
-  NAMES GROOTLIB
-  PATHS "${GROOT_BUILD_DIR}/lib"
-  NO_DEFAULT_PATH
-  REQUIRED
-)
-
-add_library(GrootPluginApi INTERFACE)
-target_include_directories(GrootPluginApi INTERFACE
-  "${GROOT_SOURCE_DIR}/include"
-)
-
-add_library(GrootPluginRuntime SHARED IMPORTED GLOBAL)
-set_target_properties(GrootPluginRuntime PROPERTIES
-  IMPORTED_LOCATION "${GROOT_PLUGIN_LIBRARY}"
-  INTERFACE_INCLUDE_DIRECTORIES "${GROOT_SOURCE_DIR}/include"
-)
-add_library(GrootRuntime SHARED IMPORTED GLOBAL)
-set_target_properties(GrootRuntime PROPERTIES
-  IMPORTED_LOCATION "${GROOT_LIBRARY}"
-  INTERFACE_INCLUDE_DIRECTORIES "${GROOT_SOURCE_DIR}/include"
-)
-
-set(PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY
-  "${CMAKE_BINARY_DIR}/plugins/PhotoPeakFit"
-)
-
-add_library(PhotoPeakCommon OBJECT
+add_library(PhotoPeakFit SHARED
   common/PhotoPeakConfig.cxx
   common/PhotoPeakFitter.cxx
-)
-target_include_directories(PhotoPeakCommon PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_link_libraries(PhotoPeakCommon PUBLIC
-  ROOT::Core
-  ROOT::Hist
-  ROOT::Graf
-  ROOT::Gpad
-  ROOT::Matrix
-  ROOT::MathCore
-)
-set_target_properties(PhotoPeakCommon PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-add_library(PhotoPeakSession OBJECT
   session/PhotoPeakSession.cxx
+  session/PhotoPeakTarget.cxx
   session/PhotoPeakMarkerController.cxx
   session/PhotoPeakDrawController.cxx
   gui/PhotoPeakControlWindow.cxx
   gui/PhotoPeakParameterRow.cxx
+  root/PhotoPeakRoot.cxx
 )
-target_include_directories(PhotoPeakSession PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/gui
-  ${CMAKE_CURRENT_SOURCE_DIR}/session
+target_compile_features(PhotoPeakFit PUBLIC cxx_std_17)
+target_include_directories(PhotoPeakFit PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE gui session
 )
-target_link_libraries(PhotoPeakSession PUBLIC
-  PhotoPeakCommon
-  ROOT::Core ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui ROOT::Spectrum
+target_link_libraries(PhotoPeakFit PUBLIC
+  ROOT::Core ROOT::RIO ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui
+  ROOT::Matrix ROOT::MathCore ROOT::Spectrum
 )
-set_target_properties(PhotoPeakSession PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-add_library(PhotoPeakGrootConnector OBJECT
-  connectors/groot/PhotoPeakGrootPlugin.cxx
-  connectors/groot/PhotoPeakGrootEventAdapter.cxx
-  connectors/groot/PhotoPeakGrootContextResolver.cxx
-)
-target_include_directories(PhotoPeakGrootConnector PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/connectors/groot
-)
-target_link_libraries(PhotoPeakGrootConnector PRIVATE
-  GrootPluginApi
-  GrootRuntime
-  ROOT::Core
-  ROOT::Hist
-  ROOT::Gpad
-  PhotoPeakSession
-)
-set_target_properties(PhotoPeakGrootConnector PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-add_library(PhotoPeakFitPlugin SHARED
-  $<TARGET_OBJECTS:PhotoPeakCommon>
-  $<TARGET_OBJECTS:PhotoPeakSession>
-  $<TARGET_OBJECTS:PhotoPeakGrootConnector>
-)
-target_link_libraries(PhotoPeakFitPlugin PRIVATE
-  GrootPluginApi
-  GrootRuntime
-  ROOT::Core
-  ROOT::Hist
-  ROOT::Graf
-  ROOT::Gpad
-  ROOT::Gui
-  ROOT::Spectrum
-  ROOT::Matrix
-  ROOT::MathCore
-)
-set_target_properties(PhotoPeakFitPlugin PROPERTIES
-  LIBRARY_OUTPUT_DIRECTORY ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}
+set_target_properties(PhotoPeakFit PROPERTIES
+  CXX_EXTENSIONS OFF
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
 )
 
-file(GENERATE
-  OUTPUT ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}/PhotoPeakFit.plugin
-  CONTENT
-"Plugin.Id: photopeakfit
-Plugin.Name: PhotoPeakFit
-Plugin.Version: ${PROJECT_VERSION}
-Plugin.ApiVersion: 4
-Plugin.Library: $<TARGET_FILE_NAME:PhotoPeakFitPlugin>
-Plugin.Action.Count: 1
-Plugin.Action.0.Id: photopeakfit.fit
-Plugin.Action.0.Label: Peak fit
-Plugin.Action.0.Tooltip: Enter PhotoPeak fit mode for the selected histogram
-"
+ROOT_GENERATE_DICTIONARY(G__PhotoPeakFit
+  PhotoPeakFit/detail/PhotoPeakRootController.h
+  MODULE PhotoPeakFit
+  LINKDEF root/PhotoPeakLinkDef.h
+  NOINSTALL
 )
 
-install(TARGETS PhotoPeakFitPlugin
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/groot/plugins
+file(COPY include/PhotoPeakFit DESTINATION "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_INCLUDEDIR}")
+configure_file(root/LoadPhotoPeakFit.C.in
+  "${CMAKE_BINARY_DIR}/LoadPhotoPeakFit.C" @ONLY)
+install(TARGETS PhotoPeakFit LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY include/PhotoPeakFit DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES "${CMAKE_BINARY_DIR}/LoadPhotoPeakFit.C" DESTINATION .)
+install(FILES
+  "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libPhotoPeakFit_rdict.pcm"
+  "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libPhotoPeakFit.rootmap"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-install(FILES ${PHOTOPEAK_PLUGIN_OUTPUT_DIRECTORY}/PhotoPeakFit.plugin
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/groot/plugins
-)
+
+option(PHOTOPEAK_BUILD_TESTS "Build PhotoPeakFit ROOT integration tests" OFF)
+if(PHOTOPEAK_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../tests/photopeak"
+    "${CMAKE_BINARY_DIR}/photopeak-tests")
+endif()

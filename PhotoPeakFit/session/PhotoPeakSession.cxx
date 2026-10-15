@@ -20,6 +20,7 @@
 
 #include "PhotoPeakDrawController.h"
 #include "PhotoPeakMarkerController.h"
+#include "PhotoPeakTarget.h"
 
 namespace {
 
@@ -48,6 +49,8 @@ void RemoveSessionObjects(TVirtualPad* pad, const char* prefix) {
 // Inputs: Session histogram.
 // Outputs: Cleared global fitter without affecting unrelated ROOT fits.
 void ReleaseSessionFitter(TH1* histogram) {
+  if(!histogram)
+    return;
   TVirtualFitter* fitter = TVirtualFitter::GetFitter();
   if(!fitter || fitter->GetObjectFit() != histogram)
     return;
@@ -97,7 +100,7 @@ PhotoPeakSession::PhotoPeakSession(TCanvas* canvas, TVirtualPad* pad, TH1* histo
 }
 
 PhotoPeakSession::~PhotoPeakSession() {
-  Close();
+  Abandon();
 }
 
 // ============== PhotoPeakSession::HandleEvent ==============
@@ -105,11 +108,11 @@ PhotoPeakSession::~PhotoPeakSession() {
 // Inputs: Normalized ROOT-independent event payload.
 // Outputs: Always true while the session is active.
 bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
-  if(fState.closed || !fHistogram || !fPad)
+  if(!ValidateTarget())
     return true;
   if(event.type == kButton1Shift) {
-    const double tolerance = std::fabs(fPad->AbsPixeltoX(event.px + 7) -
-                                       fPad->AbsPixeltoX(event.px));
+    const double tolerance = std::fabs(fPad->PadtoX(fPad->AbsPixeltoX(event.px + 7)) -
+                                       fPad->PadtoX(fPad->AbsPixeltoX(event.px)));
     const auto found = std::find_if(fState.request.peaks.begin(),
       fState.request.peaks.end(), [&](const PhotoPeakSeed& peak) {
         return std::fabs(peak.centroid.value - event.x) <= tolerance;
@@ -131,8 +134,8 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
     return true;
   }
   if(event.type == kButton1Down) {
-    const double tolerance = std::fabs(fPad->AbsPixeltoX(event.px + 7) -
-                                       fPad->AbsPixeltoX(event.px));
+    const double tolerance = std::fabs(fPad->PadtoX(fPad->AbsPixeltoX(event.px + 7)) -
+                                       fPad->PadtoX(fPad->AbsPixeltoX(event.px)));
     if(std::fabs(event.x - fState.request.fitLow) <= tolerance) {
       fDraggingRange = 0;
       return true;
@@ -213,33 +216,52 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
   return true;
 }
 
-// ============== PhotoPeakSession::Close ==============
-// Purpose: Stop interaction and hide UI before session destruction.
-// Inputs: None.
-// Outputs: Closed idempotent session with invalid borrowed pointers cleared.
-void PhotoPeakSession::Close() {
+// ============== PhotoPeakSession::ValidateTarget ==============
+// Purpose: Reject removed pads or histograms before GUI and event commands.
+// Inputs: Borrowed canvas, pad, and target identities.
+// Outputs: True for a live session; otherwise safely released resources.
+bool PhotoPeakSession::ValidateTarget() {
   if(fState.closed)
-    return;
-  fState.closed = true;
-  const bool canvasAlive = fCanvas && gROOT && gROOT->GetListOfCanvases() &&
-    gROOT->GetListOfCanvases()->FindObject(fCanvas);
-  if(fWindow)
-    fWindow->Hide();
-  if(!canvasAlive) {
-    fCanvas = nullptr;
-    fPad = nullptr;
-    fHistogram = nullptr;
-  }
+    return false;
+  if(IsPhotoPeakPadAlive(fCanvas, fPad) &&
+     IsPhotoPeakTargetDrawn(fPad, fHistogram))
+    return true;
+  Abandon();
+  return false;
+}
+
+// ============== PhotoPeakSession::DetachTarget ==============
+// Purpose: Forget a pad or canvas that is already being destroyed.
+// Inputs: None.
+// Outputs: Closed session without accessing the removed drawing hierarchy.
+void PhotoPeakSession::DetachTarget() {
+  ReleaseSessionFitter(fHistogram);
+  fCanvas = nullptr;
+  fPad = nullptr;
+  fHistogram = nullptr;
+  Abandon();
 }
 
 // ============== PhotoPeakSession::Abandon ==============
-// Purpose: Release all resources owned or borrowed by one discarded session.
-// Inputs: None.
-// Outputs: Empty closed state with GUI and heavy resources scheduled for release.
+// Purpose: Release session resources without dereferencing a removed histogram.
+// Inputs: Borrowed identities; target membership is not required.
+// Outputs: Empty closed session and safely scheduled control-window deletion.
 void PhotoPeakSession::Abandon() {
-  Close();
+  if(fState.closed)
+    return;
+  fState.closed = true;
+  ReleaseSessionFitter(fHistogram);
+  if(IsPhotoPeakPadAlive(fCanvas, fPad)) {
+    if(fMarkers)
+      fMarkers->Clear();
+    if(fDrawing)
+      fDrawing->CleanFitObjects();
+    RemoveSessionObjects(fPad, "PhotoPeakSession_background");
+    fPad->Modified();
+  }
   if(fWindow) {
     auto* window = fWindow.release();
+    window->DetachSession();
     window->DeleteWindow();
   }
   fOriginalHistogram.reset();
@@ -252,14 +274,17 @@ void PhotoPeakSession::Abandon() {
   fHistogram = nullptr;
 }
 
+// ============== PhotoPeakSession::ExitMode ==============
+// Purpose: Discard a complete interactive session.
+// Inputs: None.
+// Outputs: Closed session with all PhotoPeak resources released.
 void PhotoPeakSession::ExitMode() {
-  Clean();
   Abandon();
-  if(fExitCallback)
-    fExitCallback();
 }
 
 void PhotoPeakSession::RaiseWindow() {
+  if(!ValidateTarget())
+    return;
   if(fWindow)
     fWindow->Show();
 }
@@ -269,6 +294,9 @@ void PhotoPeakSession::RaiseWindow() {
 // Inputs: Current session state.
 // Outputs: Terminal report and fit primitives.
 void PhotoPeakSession::Fit() {
+  if(!ValidateTarget())
+    return;
+  TVirtualPad::TContext context(fPad);
   if(!fHistogram || fState.request.peaks.empty()) {
     std::printf("PhotoPeakFit: select at least one initial peak.\n");
     return;
@@ -283,6 +311,9 @@ void PhotoPeakSession::Fit() {
 // Inputs: Current session state and pad.
 // Outputs: Clean pad with fresh range and peak-selection state.
 void PhotoPeakSession::Clean() {
+  if(!ValidateTarget())
+    return;
+  TVirtualPad::TContext context(fPad);
   if(fMarkers)
     fMarkers->Clear();
   ReleaseSessionFitter(fHistogram);
@@ -309,6 +340,8 @@ void PhotoPeakSession::Clean() {
 }
 
 void PhotoPeakSession::SetRange(double low, double high) {
+  if(!ValidateTarget())
+    return;
   if(low > high)
     std::swap(low, high);
   fState.request.fitLow = low;
@@ -321,6 +354,8 @@ void PhotoPeakSession::SetRange(double low, double high) {
 // Inputs: Peak centroid in histogram coordinates.
 // Outputs: Updated request, histogram marker, and control-window section.
 void PhotoPeakSession::AddPeak(double centroid) {
+  if(!ValidateTarget())
+    return;
   PhotoPeakSeed seed;
   seed.centroid = {centroid, PhotoPeakParameterMode::Free,
                    fState.request.fitLow, fState.request.fitHigh};
@@ -347,6 +382,8 @@ void PhotoPeakSession::AddPeak(double centroid) {
 }
 
 void PhotoPeakSession::ReplaceRequest(const PhotoPeakFitRequest& request) {
+  if(!ValidateTarget())
+    return;
   fState.request = request;
   std::sort(fState.request.peaks.begin(), fState.request.peaks.end(),
     [](const PhotoPeakSeed& left, const PhotoPeakSeed& right) {
@@ -357,15 +394,12 @@ void PhotoPeakSession::ReplaceRequest(const PhotoPeakFitRequest& request) {
   RefreshGui();
 }
 
-void PhotoPeakSession::SetExitCallback(std::function<void()> callback) {
-  fExitCallback = std::move(callback);
-}
-
 // ============== PhotoPeakSession::RefreshMarkers ==============
 // Purpose: Recreate range and centroid markers from state.
 // Inputs: Current request.
 // Outputs: Synchronized pad primitives.
 void PhotoPeakSession::RefreshMarkers() {
+  TVirtualPad::TContext context(fPad);
   if(fMarkers)
     fMarkers->Refresh(fState);
 }
@@ -405,6 +439,7 @@ void PhotoPeakSession::ShowBackground() {
   if(!fHistogram || !fPad)
     return;
   RemoveSessionObjects(fPad, "PhotoPeakSession_background");
+  TVirtualPad::TContext context(fPad);
   TSpectrum spectrum;
   TH1* background = spectrum.Background(fHistogram, 20,
     fState.request.config.backgroundOptions.c_str());

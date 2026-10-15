@@ -1,120 +1,153 @@
 # root-plugins
 
-Optional plugins for ROOT-based applications. Each plugin keeps its ROOT-only
-common implementation separate from application-specific connectors.
+Optional plugins for CERN ROOT. Each plugin is an independent top-level unit.
+PhotoPeakFit runs directly in native ROOT with its existing fit controls.
 
-Each plugin is a parallel top-level unit with its own public API, common code,
-and connectors:
+## Build
 
-```text
-root-plugins/
-├── PhotoPeakFit/
-│   ├── common/
-│   ├── session/
-│   ├── gui/
-│   ├── connectors/
-│   │   └── groot/
-│   ├── include/
-│   │   └── PhotoPeakFit/
-└── FuturePlugin/
-    ├── common/
-    ├── connectors/
-    └── include/
-```
-
-## Build all plugins
-
-Install ROOT and build Groot before configuring this repository. Groot-specific
-connectors use Groot's public Plugin headers and normal build-tree library.
-
-When Groot is in the adjacent `../groot` directory, root-plugins can be built
-with one command:
+A ROOT development installation with native GUI support, CMake, and a C++17
+compiler are required. With `root-config` available in your environment:
 
 ```bash
 make
 ```
 
-For a custom Groot location, use
-`make GROOT_SOURCE_DIR=/path/to/groot GROOT_BUILD_DIR=/path/to/groot-build`.
+This builds `build/lib/libPhotoPeakFit.dylib` on macOS, or
+`build/lib/libPhotoPeakFit.so` on Linux, together with its ROOT dictionary and
+`build/LoadPhotoPeakFit.C`. No application-specific host is required.
 
-The equivalent direct CMake commands are:
+Equivalent CMake commands:
 
 ```bash
-cmake -S . -B build \
-  -DGROOT_SOURCE_DIR="/path/to/groot" \
-  -DGROOT_BUILD_DIR="/path/to/groot/build"
+cmake -S . -B build
 cmake --build build -j4
 ```
 
-To build only PhotoPeakFit, use its independent CMake entry:
+PhotoPeakFit also has an independent CMake entry:
 
 ```bash
-cmake -S PhotoPeakFit -B build-photopeak \
-  -DGROOT_SOURCE_DIR="/path/to/groot" \
-  -DGROOT_BUILD_DIR="/path/to/groot/build"
+cmake -S PhotoPeakFit -B build-photopeak
 cmake --build build-photopeak -j4
 ```
 
-Both forms require a ROOT development installation and a compiled Groot tree.
-The plugin includes Groot's public API headers but does not compile Groot
-source files. An optional install places the library and manifest together:
+Use `make BUILD_DIR=tests/custom-build` for a custom output directory. To select
+a ROOT installation explicitly, pass `-DROOT_DIR=/path/to/root/lib/cmake/ROOT`
+(or its build-tree configuration directory) when configuring with CMake.
+
+## Run in ROOT
+
+Start native ROOT and load the generated macro:
 
 ```bash
-cmake --install build --prefix "$HOME/.local"
+root -l build/LoadPhotoPeakFit.C
 ```
 
-## PhotoPeakFit
+At the ROOT prompt, draw a one-dimensional histogram and start its fit session:
 
-PhotoPeakFit provides ROOT-only single/multiple-photopeak fitting, a pad-owned
-session and control GUI, and a thin Groot connector. It builds one shared
-library and one adjacent ROOT TEnv manifest in
-`build/plugins/PhotoPeakFit`.
+```cpp
+TFile* file = TFile::Open("tests/hist_fragment62276.root");
+TH1D* hist = file->Get<TH1D>("Array16/energy");
+hist->GetXaxis()->SetRangeUser(300, 400);
+hist->Draw();
+PhotoPeakFit::Start(hist, gPad);
+```
+
+The data file above is a local test fixture and is not distributed with the
+repository. Any directly drawn one-dimensional TH1 can be used instead.
+For divided canvases, draw in the desired subpad and pass that pad to `Start`.
+
+`PhotoPeakFit::Start()` uses the current pad and its selected or sole drawn
+one-dimensional histogram. If multiple histograms are drawn, click the target
+first or pass it explicitly. A pad and a target histogram can each belong to
+only one active fit session. Starting the same session again raises its window;
+switching its target requires stopping that session first. Failed API calls
+return `false`; `PhotoPeakFit::LastError()` explains the failure.
+
+The control window is non-modal. Its existing layout, parameter defaults,
+background option menus, and three-row initial-peak pagination are retained.
+
+| Interaction | Action |
+|---|---|
+| Left click / drag in the plot | Set / move the two red fit-range lines |
+| Shift-left click | Add a peak, or remove an existing peak on release |
+| Shift-left drag | Move a peak centroid |
+| `f` | Fit |
+| `n` / Clean | Clear fit drawings, range selections, and peak seeds |
+| `w` / `q` | Rebin / undo rebin |
+| Left / right arrow | Pan the histogram view |
+| `b` | Display the PhotoPeak background |
+| `o` | Unzoom |
+| Delete in a peak row | Remove its seed and matching centroid marker |
+| Previous / Next | Page through three initial-peak rows |
+| Exit mode / close fit window | Discard the session |
+
+ROOT-native canvas, axis, selection, drag, and context-menu behavior remains
+active. PhotoPeakFit observes native events and routes them only to its owning
+pad. Coordinate conversion supports logarithmic x axes.
+
+Programmatic cleanup is also available:
+
+```cpp
+PhotoPeakFit::Clean(gPad);
+PhotoPeakFit::Stop(gPad);
+PhotoPeakFit::StopAll();
+```
+
+Exiting removes PhotoPeak drawings and releases its histogram clone and retained
+fitter. Re-entry creates a fresh empty session. Removing the target drawing,
+deleting the target or subpad, or closing the canvas invalidates the session.
+Queued GUI commands are detached before the control window is deleted safely
+by ROOT's event loop. Session operations run on ROOT's main GUI thread.
+
+## Install
 
 ```bash
-export GROOT_PLUGIN_PATH="$PWD/build/plugins/PhotoPeakFit"
-groot -g /path/to/158_12_05_25_back_subtracted.root
+cmake --install build --prefix /path/to/photopeakfit
+root -l /path/to/photopeakfit/LoadPhotoPeakFit.C
 ```
 
-Draw `ParticleGates/Er/GammaEfficiency_Er`, then select `Peak fit`. This opens a
-non-modal control window and gives the selected pad one PhotoPeak
-application-overlay session. ROOT-native canvas, axis, object-selection, and
-context-menu behavior remains active; only Groot-specific interaction is
-suspended. The session locks one explicitly selected TH1, or the sole TH1 in
-the pad; ambiguous multi-histogram pads require an explicit selection. A pad
-and non-null target can each belong to only one interactive plugin session.
+Keep the loader, `include/`, and library directory together. The installed
+library, ROOT dictionary, and headers support moving the complete prefix.
+Native `TCanvas` is supported; web canvases and `RCanvas` are outside this stage.
 
-In fit mode, ordinary left clicks/drags set the two red fit-range lines and
-Shift-left-click toggles red centroid markers at continuous x coordinates.
-Histogram centroid markers and the control window's initial-peak sections stay
-synchronized when either side adds or removes a peak. Each visible initial-peak
-section has a `Delete` button that removes the corresponding peak seed and red
-centroid marker, matching Shift-click removal on the histogram. Remaining peaks
-move forward to fill the current page; if the last page becomes invalid, the
-window selects the new last page.
-Use `f` to fit, `n` to clean, `w/q` to rebin/undo, left/right arrows to pan,
-`b` to display the PhotoPeak background, and `o` to unzoom. Other Groot input
-bindings are suppressed only in the session-owned pad. Closing the fit window
-or selecting `Exit mode` restores Groot interaction and fully discards the
-PhotoPeak session. It removes canvas artifacts, releases the histogram clone
-and retained ROOT fitter, and schedules the Fit window and all child controls
-for safe event-loop deletion. Re-entering Fit mode creates a new empty session
-and never resumes old peaks, markers, or parameters.
+## Code structure
 
-In fit mode, both `n` and the `Clean` button invoke the session's own cleanup,
-independently of Groot's plugin cleanup. PhotoPeak removes its markers, curves,
-legend, centroid labels, and displayed background. Cleanup also clears the
-saved peak seeds and resets the fit range, so later clicks cannot restore old
-markers; range endpoints and peak markers must be selected again. Initial-peak
-rows use a three-row paged pool: the complete peak vector remains available to
-the fitter and marker controller, while Previous/Next remap only three GUI
-sections at a time. A fixed-height viewport reserves the Initial Peak area when
-the session is empty; three sections fit without vertical scrolling. Clean
-hides the three pooled rows without dynamically destroying Cocoa controls. The
-pool is destroyed with the complete Fit window on Exit. Existing Groot markers
-on the target histogram are deleted whenever a new PhotoPeak session is
-entered.
-Background algorithm options are selected from a checked popup menu; direction,
-polynomial order, and smoothing choices are mutually exclusive groups.
+```text
+PhotoPeakFit/
+├── common/                  # Fit algorithms and configuration
+├── session/                 # State, target validation, markers, and drawings
+├── gui/                     # Existing ROOT control window and parameter rows
+├── root/                    # Startup, event routing, dictionary, and loader
+└── include/PhotoPeakFit/     # Public headers; detail/ contains ROOT receiver metadata
+```
 
-The plugin is loaded only after the action is selected. Removing
-`GROOT_PLUGIN_PATH` leaves Groot independent of this repository.
+The ROOT entry coordinates sessions; GUI controls operate through a session;
+sessions call the fitter. The fit algorithms do not depend on GUI controls or
+event routing. Explicit fit calls can also run in ROOT batch mode.
+
+## Tests
+
+All test sources and generated test artifacts stay under `tests/`. Configure a
+fresh test build and run the automated checks:
+
+```bash
+cmake -S . -B tests/root-build -DPHOTOPEAK_BUILD_TESTS=ON
+cmake --build tests/root-build -j4
+ctest --test-dir tests/root-build --output-on-failure
+```
+
+The tests cover numerical single/multiple peak fits, actual canvas signal
+connections, target selection, independent pads, shortcuts, logarithmic
+coordinates, drawing/object removal, and shutdown. When
+`tests/hist_fragment62276.root` is present, a separate test fits its
+`Array16/energy` and `Array17/energy` spectra read-only.
+
+Run the native GUI checks from an interactive desktop session:
+
+```bash
+tests/root-build/photopeak-tests/photopeak_tests --gui
+```
+
+This additionally checks the existing control window's peak pagination, Delete,
+Clean, and close actions. Test data, generated libraries, and logs stay ignored;
+only focused test source files are versioned.
