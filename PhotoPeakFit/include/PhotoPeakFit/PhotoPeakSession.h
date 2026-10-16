@@ -32,6 +32,7 @@ class PhotoPeakSession {
     void Rebin(bool undo);
     void Pan(int direction);
     void Unzoom();
+    void RefreshView();
     void ShowBackground();
     void SetStatus(const std::string& message);
 

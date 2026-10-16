@@ -638,6 +638,16 @@ void PhotoPeakSession::Unzoom() {
   RefreshMarkers();
 }
 
+// ============== PhotoPeakSession::RefreshView ==============
+// Purpose: Refresh overlays after a native axis dialog without changing fit inputs.
+// Inputs: Current view. Outputs: Synchronized markers and protected control drafts.
+void PhotoPeakSession::RefreshView() {
+  if(!ValidateTarget())
+    return;
+  RefreshMarkers();
+  RefreshGui();
+}
+
 // ============== PhotoPeakSession::ShowBackground ==============
 // Purpose: Show the TSpectrum background selected for fitting.
 // Inputs: Committed background settings. Outputs: Visible estimate used by Fit, or disabled background.
@@ -664,5 +674,5 @@ void PhotoPeakSession::ShowBackground() {
   DrawPhotoPeakBackground(fPad, fHistogram, estimate);
   fPad->Modified();
   fPad->Update();
-  SetStatus("Background updated (thick green line). Fit subtracts it; displayed curves include it.");
+  SetStatus("Background updated (green dashed line). Fit subtracts it; displayed curves include it.");
 }

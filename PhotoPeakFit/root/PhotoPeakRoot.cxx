@@ -12,6 +12,9 @@
 #include <Buttons.h>
 #include <KeySymbols.h>
 #include <TCanvas.h>
+#include <TAxis.h>
+#include <TClass.h>
+#include <TContextMenu.h>
 #include <TFrame.h>
 #include <TGClient.h>
 #include <TH1.h>
@@ -100,6 +103,7 @@ public:
   TCanvas* arrowCanvas = nullptr;
   UInt_t arrowKey = 0;
   TCanvas* escapeCanvas = nullptr;
+  TCanvas* rangeCanvas = nullptr;
 };
 
 // ============== PhotoPeakRootController::Instance ==============
@@ -283,6 +287,11 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
   PhotoPeakInputEvent input;
   input.type = event;
   input.code = event == kKeyPress ? (py ? py : px) : static_cast<int>(fImpl->arrowKey);
+  if(event == kKeyPress && fImpl->rangeCanvas == canvas &&
+     (input.code == kKey_e || input.code == kKey_E)) {
+    input.code = kKey_E;
+    fImpl->rangeCanvas = nullptr;
+  }
   input.px = px;
   input.x = pad->PadtoX(pad->AbsPixeltoX(px));
   const int left = pad->XtoAbsPixel(pad->GetUxmin());
@@ -290,6 +299,20 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
   const int top = pad->YtoAbsPixel(pad->GetUymax());
   const int bottom = pad->YtoAbsPixel(pad->GetUymin());
   input.inPlot = px >= left && px <= right && py >= top && py <= bottom;
+  if(input.type == kKeyPress && input.code == kKey_E) {
+    if(gROOT->IsBatch() || session->State().fitting)
+      return;
+    auto* menu = canvas->GetContextMenu();
+    menu->SetCanvas(canvas);
+    menu->SetPad(pad);
+    menu->SetObject(session->Histogram()->GetXaxis());
+    menu->Action(session->Histogram()->GetXaxis(), TAxis::Class()->GetMethodAny("SetRangeUser"));
+    // The dialog processes events; reacquire the session after it closes.
+    session = fImpl->Find(pad);
+    if(session && CanvasAlive(canvas))
+      session->RefreshView();
+    return;
+  }
   session->HandleEvent(input);
   if(!session->IsClosed()) {
     pad->Modified();
@@ -298,24 +321,28 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
 }
 
 // ============== PhotoPeakRootController::OnGuiEvent ==============
-// Purpose: Preserve arrow key identity omitted by native TCanvas events.
+// Purpose: Preserve native arrow identity and normalize Shift+E across ROOT backends.
 // Inputs: Native GUI event and optional modal-window identity.
 // Outputs: Key identity cached only for the corresponding canvas container.
 void PhotoPeakRootController::OnGuiEvent(Event_t* event, Window_t) {
   fImpl->arrowCanvas = nullptr;
   fImpl->arrowKey = 0;
   fImpl->escapeCanvas = nullptr;
+  fImpl->rangeCanvas = nullptr;
   if(!event || event->fType != kGKeyPress || !gVirtualX)
     return;
   UInt_t keysym = 0;
   char text[8] = {};
   gVirtualX->LookupString(event, text, sizeof(text), keysym);
-  if(keysym != kKey_Left && keysym != kKey_Right && keysym != kKey_Escape)
+  const bool axisRange = keysym == kKey_E || (keysym == kKey_e && (event->fState & kKeyShiftMask));
+  if(keysym != kKey_Left && keysym != kKey_Right && keysym != kKey_Escape && !axisRange)
     return;
   for(TCanvas* canvas : fImpl->canvases) {
     if(CanvasAlive(canvas) && canvas->GetCanvasID() >= 0 &&
        gVirtualX->GetWindowID(canvas->GetCanvasID()) == event->fWindow) {
-      if(keysym == kKey_Escape)
+      if(axisRange)
+        fImpl->rangeCanvas = canvas;
+      else if(keysym == kKey_Escape)
         fImpl->escapeCanvas = canvas;
       else {
         fImpl->arrowCanvas = canvas;
@@ -385,6 +412,7 @@ void PhotoPeakRootController::Poll() {
     fImpl->guiConnected = false;
     fImpl->arrowCanvas = nullptr;
     fImpl->arrowKey = 0;
+    fImpl->rangeCanvas = nullptr;
   }
 }
 

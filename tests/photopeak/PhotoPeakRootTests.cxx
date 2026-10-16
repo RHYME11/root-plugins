@@ -14,6 +14,7 @@
 #include <KeySymbols.h>
 #include <TApplication.h>
 #include <TCanvas.h>
+#include <TContextMenu.h>
 #include <TFile.h>
 #include <TF1.h>
 #include <TGButton.h>
@@ -25,6 +26,8 @@
 #include <TGTextEntry.h>
 #include <TGTextView.h>
 #include <TGScrollBar.h>
+#include <TRootContextMenu.h>
+#include <TRootDialog.h>
 #include <TH1D.h>
 #include <TH2D.h>
 #include <THashList.h>
@@ -36,6 +39,7 @@
 #include <TMarker.h>
 #include <TROOT.h>
 #include <TSystem.h>
+#include <TTimer.h>
 #include <TString.h>
 #include <TSpectrum.h>
 #include <TVirtualFitter.h>
@@ -117,6 +121,9 @@ void CheckLegend(TVirtualPad* pad, TH1* hist, const PhotoPeakFitResult& result) 
   auto* legend = dynamic_cast<TLegend*>(pad->GetListOfPrimitives()->FindObject(prefix + "legend"));
   Check(legend && legend->GetListOfPrimitives()->GetSize() == static_cast<int>(result.peaks.size()),
     "legend contains one entry per fitted peak");
+  Check(legend->GetBorderSize() == 0 && legend->GetFillStyle() == 0 &&
+    std::fabs(legend->GetTextSize() - 0.035) < 1e-6 && std::fabs(legend->GetX1NDC() - 0.12) < 1e-6,
+    "legend uses the macro's transparent upper-left layout");
   for(std::size_t index = 0; index < result.peaks.size(); ++index) {
     auto* entry = dynamic_cast<TLegendEntry*>(legend->GetListOfPrimitives()->At(index));
     const TString curve = result.peaks.size() == 1 ? prefix + "total_fit" :
@@ -149,10 +156,24 @@ void FitNumerics() {
   session.AddPeak(110);
   auto request = session.State().request;
   request.config.mode = PhotoPeakFitMode::LowStat;
+  request.config.relativePosition = true;
+  request.peaks.front().centroid.mode = PhotoPeakParameterMode::Fixed;
+  request.peaks.front().height = {1000, PhotoPeakParameterMode::Limited, 0, 2000};
   result = PhotoPeakFitter::Fit(&hist, request, nullptr, false);
   Check(result.status == 0 && result.peaks.size() == 2, "multiple peak fit status");
   Check(std::fabs(result.peaks[0].centroid - 100) < 0.05 &&
     std::fabs(result.peaks[1].centroid - 110) < 0.05, "multiple peak centroids");
+  const std::string report = result.Report(hist.GetName(), request);
+  for(const char* text : {"Requested mode: lowstat", "ROOT fit option:", "Relative position fixed: true",
+    "Relative FWHM fixed: true", "Fit status: 0", "reduced chisq =", "Peaks:", "Fit parameters:",
+    "derived from fixed P0", "derived from WSCALE", "(fix 100)", "(limit 0 2000)", "inactive in selected model"})
+    Check(report.find(text) != std::string::npos, std::string("macro-style report includes ") + text);
+  Check(result.fitParameters.size() == 13 && result.fitParameters[6].name == "WSCALE" &&
+    result.fitParameters[7].name == "P0" && result.fitParameters[12].name == "H1", "raw parameters have meaningful names");
+  auto noDegrees = result;
+  noDegrees.ndf = 0;
+  Check(noDegrees.Report(hist.GetName(), request).find("reduced chisq = n/a") != std::string::npos,
+    "undefined reduced chi-square is reported explicitly");
   session.ExitMode();
 }
 
@@ -198,6 +219,10 @@ void PeakDrawing() {
     auto* first = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_0"));
     auto* second = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "component_1"));
     Check(total && background && first && second, "drawn total, background and components exist");
+    Check(total->GetLineColor() == kRed && total->GetLineWidth() == 4 &&
+      background->GetLineColor() == kBlack && background->GetLineStyle() == 9 && background->GetLineWidth() == 4 &&
+      first->GetLineColor() == kBlue + 1 && second->GetLineColor() == kGreen + 2,
+      "multi-peak curves use the macro's line weights, background dashes and distinct palette");
     CheckLegend(&canvas, &hist, drawn);
     for(int parameter = kPhotoPeakA; parameter <= kPhotoPeakStep; ++parameter) {
       Check(drawn.parameters[parameter] == total->GetParameter(parameter) &&
@@ -306,7 +331,7 @@ void BackgroundFits() {
       auto* total = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "total_fit"));
       auto* background = dynamic_cast<TF1*>(canvas.GetListOfPrimitives()->FindObject(prefix + "background_fit"));
       auto* drawing = EstimatedBackground(&canvas, &hist);
-      Check(total && background && drawing && drawing->GetLineWidth() >= 3 && drawing->GetLineStyle() == 1,
+      Check(total && background && drawing && drawing->GetLineWidth() >= 3 && drawing->GetLineStyle() == 7,
         "fit draws a visible estimate and restored fit curves");
       Check(total->GetNumberFreeParameters() == actual.freeParameters && total->GetNDF() == actual.ndf,
         "restored curve preserves fitted parameter constraints and statistics");
@@ -582,6 +607,105 @@ void CheckLayout(TGCompositeFrame* frame) {
   }
 }
 
+class AxisDialogResponse : public TTimer {
+public:
+  // ============== AxisDialogResponse::AxisDialogResponse ==============
+  // Purpose: Respond to the real ROOT dialog from its nested event loop.
+  // Inputs: Canvas and cancel flag. Outputs: Scheduled test response.
+  AxisDialogResponse(TCanvas& canvas, bool cancel) : TTimer(25, kTRUE), fCanvas(canvas), fCancel(cancel) {
+    TurnOn();
+  }
+
+  // ============== AxisDialogResponse::Notify ==============
+  // Purpose: Fill the native SetRangeUser inputs and press OK or Cancel.
+  // Inputs: Open context-menu dialog. Outputs: Recorded dialog identity and closed window.
+  Bool_t Notify() override {
+    auto* context = fCanvas.GetContextMenu();
+    auto* menu = dynamic_cast<TRootContextMenu*>(context->GetContextMenuImp());
+    auto* dialog = menu ? menu->GetDialog() : nullptr;
+    if(!dialog) {
+      Reset();
+      return kTRUE;
+    }
+    TurnOff();
+    opened = true;
+    axis = context->GetCalledObject();
+    std::vector<TGTextEntry*> fields;
+    TIter children(dialog->GetList());
+    while(auto* element = static_cast<TGFrameElement*>(children())) {
+      if(auto* field = dynamic_cast<TGTextEntry*>(element->fFrame))
+        fields.push_back(field);
+    }
+    validFields = fields.size() == 2;
+    if(validFields) {
+      fields[0]->SetText(fCancel ? "70" : "92", false);
+      fields[1]->SetText(fCancel ? "140" : "118", false);
+    }
+    menu->ProcessMessage(MK_MSG(kC_COMMAND, kCM_BUTTON), fCancel || !validFields ? 3 : 1, 0);
+    return kFALSE;
+  }
+
+  bool opened = false;
+  bool validFields = false;
+  TObject* axis = nullptr;
+
+private:
+  TCanvas& fCanvas;
+  bool fCancel;
+};
+
+// ============== AxisRangeShortcut ==============
+// Purpose: Verify Shift+E opens the same native range dialog used by GRSISort.
+// Inputs: Native GUI application. Outputs: Target-local view changes and working cancellation.
+void AxisRangeShortcut() {
+  TCanvas canvas("axisShortcut", "axisShortcut", 1000, 600);
+  canvas.Divide(2, 1);
+  TH1D first("axisFirst", "axisFirst", 1000, 0, 200);
+  TH1D second("axisSecond", "axisSecond", 1000, 0, 200);
+  FillSpectrum(first);
+  FillSpectrum(second);
+  auto* left = canvas.cd(1);
+  first.Draw();
+  auto* right = canvas.cd(2);
+  second.Draw();
+  canvas.Update();
+  Check(PhotoPeakFit::Start(&first, left) && PhotoPeakFit::Start(&second, right), "axis shortcut sessions");
+  Seed(canvas, left, &first, 100);
+  canvas.ProcessedEvent(kKeyPress, 'f', 0, &first);
+  const TString totalName = TString::Format("PhotoPeak_%p_total_fit", static_cast<void*>(&first));
+  auto* curve = left->GetListOfPrimitives()->FindObject(totalName);
+  Check(curve, "fit curve exists before axis zoom");
+  const int otherFirst = second.GetXaxis()->GetFirst();
+  const int otherLast = second.GetXaxis()->GetLast();
+  Event_t event = {};
+  event.fType = kGKeyPress;
+  event.fWindow = gVirtualX->GetWindowID(canvas.GetCanvasID());
+  event.fCode = gVirtualX->KeysymToKeycode(kKey_e);
+  event.fState = kKeyShiftMask;
+  {
+    AxisDialogResponse response(canvas, false);
+    gClient->HandleEvent(&event);
+    Check(response.opened && response.validFields && response.axis == first.GetXaxis(),
+      "native Shift+E opens the target X-axis SetRangeUser dialog");
+  }
+  Check(std::fabs(first.GetXaxis()->GetBinLowEdge(first.GetXaxis()->GetFirst()) - 92) < 0.21 &&
+    std::fabs(first.GetXaxis()->GetBinUpEdge(first.GetXaxis()->GetLast()) - 118) < 0.21,
+    "dialog OK applies the requested X-axis view");
+  Check(second.GetXaxis()->GetFirst() == otherFirst && second.GetXaxis()->GetLast() == otherLast &&
+    left->GetListOfPrimitives()->FindObject(totalName) == curve && Markers(left) == 3,
+    "axis dialog preserves other pads, fitted curves and peak selection");
+  const int firstBin = first.GetXaxis()->GetFirst();
+  const int lastBin = first.GetXaxis()->GetLast();
+  event.fCode = gVirtualX->KeysymToKeycode(kKey_E);
+  {
+    AxisDialogResponse response(canvas, true);
+    gClient->HandleEvent(&event);
+    Check(response.opened && first.GetXaxis()->GetFirst() == firstBin && first.GetXaxis()->GetLast() == lastBin,
+      "native range dialog Cancel preserves the view");
+  }
+  PhotoPeakFit::StopAll();
+}
+
 // ============== GuiControls ==============
 // Purpose: Verify real English controls, draft submission, stable selection and results.
 // Inputs: Interactive ROOT application. Outputs: Checked four-page control panel.
@@ -719,8 +843,8 @@ void GuiControls() {
     "canvas Fit commits the same real editor as Fit button");
   Check(session.State().result.status == 0, "GUI-driven fit converges");
   std::string resultText = initialResults->GetText()->AsString().Data();
-  Check(resultText.find(session.State().result.GlobalParameterReport()) != std::string::npos &&
-    resultText.find("Centroid: ") != std::string::npos && resultText.find("No fit result") == std::string::npos,
+  Check(resultText.find(session.State().result.Report(hist.GetName(), session.State().fittedRequest)) != std::string::npos &&
+    resultText.find("Position = ") != std::string::npos && resultText.find("No fit result") == std::string::npos,
     "visible Results contains the completed snapshot before any further event or interaction");
   const double shortcutCentroid = session.State().result.peaks.front().centroid;
   window->ProcessMessage(button, 100, 0);
@@ -731,7 +855,7 @@ void GuiControls() {
   Check(session.ReplaceRequest(request), "change the next fit to a distinct fixed centroid");
   window->ProcessMessage(button, 100, 0);
   resultText = initialResults->GetText()->AsString().Data();
-  Check(resultText.find("Centroid: 100.4 +/- 0") != std::string::npos && tabs->GetCurrent() == 3,
+  Check(resultText.find("Position = 100.4 +/- 0 (fixed) (fix 100.4)") != std::string::npos && tabs->GetCurrent() == 3,
     "refit immediately replaces visible Results while preserving the selected tab");
   auto* backgroundMode = FindWidget<TGComboBox>(window, 106);
   auto* updateBackground = FindWidget<TGTextButton>(window, 125);
@@ -962,8 +1086,10 @@ int main(int argc, char** argv) {
       RootInteraction();
       Lifecycle();
       SessionState();
-      if(gui)
+      if(gui) {
+        AxisRangeShortcut();
         GuiControls();
+      }
     }
     PhotoPeakFit::StopAll();
     std::cout << "PASS PhotoPeakFit ROOT integration" << std::endl;

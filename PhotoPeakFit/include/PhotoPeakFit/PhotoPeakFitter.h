@@ -26,6 +26,11 @@ class PhotoPeakFitter {
                                   const PhotoPeakFitRequest& request,
                                   TVirtualPad* pad = nullptr,
                                   bool draw = true);
+
+  private:
+    static PhotoPeakFitResult FitSingle(TH1* hist, double fitLow, double fitHigh,
+      double peak0, const PhotoPeakFitConfig& config, TVirtualPad* pad, bool draw,
+      const PhotoPeakFitRequest* request);
 };
 
 #endif

@@ -300,7 +300,7 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   fImpl->disableBackground = addButton(backgroundActions, "Disable background", kDisableBackground);
   background->AddFrame(backgroundActions, new TGLayoutHints(kLHintsExpandX, 3, 3, 3, 3));
   auto* note = new TGLabel(background,
-    "Local / Global enables background subtraction for Fit.\nThe thick green line is the estimated background.\nFit curves include it on the original spectrum.\nA/B/C in Shape adjust the remaining background.");
+    "Local / Global enables background subtraction for Fit.\nThe green dashed line is the estimated background.\nFit curves include it on the original spectrum.\nA/B/C in Shape adjust the remaining background.");
   note->SetTextJustify(kTextLeft);
   background->AddFrame(note, new TGLayoutHints(kLHintsLeft, 6, 6, 8, 4));
 
@@ -506,22 +506,8 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
   std::ostringstream output;
   output << std::setprecision(10);
   if(state.hasResult) {
-    output << "Model: " << state.result.model << "\nStatus: " << state.result.status
-      << "\nFit range: [" << state.fittedRequest.fitLow << ", " << state.fittedRequest.fitHigh << "]"
-      << "\nRebin at fit: x" << state.fittedRebinFactor
-      << "\nChi2 / NDF: " << state.result.chi2 << " / " << state.result.ndf
-      << "\nReduced chi2: " << state.result.reducedChi2 << "\n";
-    output << "\n" << state.result.BackgroundReport()
-      << "\n" << state.result.GlobalParameterReport();
-    for(std::size_t index = 0; index < state.result.peaks.size(); ++index) {
-      const auto& peak = state.result.peaks[index];
-      const auto id = index < state.fittedRequest.peaks.size() ? state.fittedRequest.peaks[index].id : index + 1;
-      output << "\nPeak " << id << "\n  Centroid: " << peak.centroid << " +/- " << peak.centroidError
-        << "\n  FWHM: " << peak.fwhm << " +/- " << peak.fwhmError
-        << "\n  Height: " << peak.height << " +/- " << peak.heightError
-        << "\n  Area: " << peak.area << " +/- " << peak.areaError << "\n";
-    }
-    output << "\nTotal area: " << state.result.area << " +/- " << state.result.areaError << "\n";
+    output << state.result.Report(fImpl->session->Histogram()->GetName(), state.fittedRequest)
+      << "\nRebin at fit: x" << state.fittedRebinFactor << "\n";
   } else {
     output << "No fit result. Select peaks and choose Fit.\n";
   }

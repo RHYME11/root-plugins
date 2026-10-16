@@ -106,6 +106,7 @@ preserving ROOT interaction.
 | Left click in the plot | Add a peak, or select an existing nearby peak |
 | Drag a peak marker | Move its centroid; clicking it again does not delete it |
 | Shift-left click | Set successive fit-range bounds |
+| Shift+E over the canvas | Open ROOT's native X-axis SetRangeUser dialog for this target |
 | Drag a range line | Move that bound; crossing the other bound keeps the dragged line under the pointer |
 | Delete selected / canvas Del | Delete the selected peak |
 | Escape over the canvas | Cancel the gesture and enter Browse |
@@ -131,17 +132,26 @@ status messages. Results do not overwrite the initial parameter values.
 The panel repaints the latest result when fitting finishes, without another
 click or tab change. Both the panel and terminal report fitted shared parameters
 and their uncertainties; these are separate from the stored initial settings.
+Terminal and Results use the same macro-style report: initial peaks, requested
+mode and ROOT options, effective background settings, relative constraints,
+model/status, chi-square, grouped peak values and areas, and named raw fit
+parameters. Fixed values, actual parameter limits, derived positions/widths,
+and parameters inactive in the selected model are identified explicitly.
 
 Multi-peak plots draw each colored component as the common fitted background plus
 that peak's contribution. All components share the dashed black background,
 including its polynomial and enabled smoothed-step terms. The red total curve
 contains the background and all peaks. Reported peak areas and their errors
 continue to describe the peak contribution alone.
-The legend contains only a colored line and the fitted centroid (three decimal
-places) for each peak, including single-peak fits.
+Plot styling follows the local PhotoPeakFit macro: red total curves, black dashed
+fitted backgrounds, distinct component colors, and a borderless transparent
+legend at the upper left. The legend contains only a colored line and the fitted
+centroid (three decimal places), including single-peak fits. Peak positions are
+shown in the legend without additional rotated labels on the spectrum.
+Legend height and text size adapt to the number of fitted peaks.
 
 TSpectrum **participates in fitting** when Local or Global is selected. Selecting
-either scope immediately draws a thick green background estimate; changing its
+either scope immediately draws a thick green dashed background estimate; changing its
 iterations, options or local bounds updates that estimate. **Update background**
 recalculates it. **Disable background** selects None, removes the estimate, and
 disables subtraction for the next fit. None uses the ordinary fitted background.
@@ -241,3 +251,5 @@ equivalence, Delete, Clean, close actions, and scrollbar visibility on first
 display and reopening, relative-width checkbox/editor consistency, and immediate
 result updates after fitting and refitting. Test data, generated libraries, and logs stay ignored;
 only focused test source files are versioned.
+Native GUI tests also open the actual Shift+E axis dialog, apply a range, cancel
+it, and check that other pads and the existing fit stay unchanged.

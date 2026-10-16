@@ -81,7 +81,7 @@ void RemovePhotoPeakBackground(TVirtualPad* pad, TH1* histogram) {
 
 // ============== DrawPhotoPeakBackground ==============
 // Purpose: Show a visible background estimate on the original spectrum.
-// Inputs: Target pad/histogram and estimate. Outputs: Thick green baseline, with no duplicate.
+// Inputs: Target pad/histogram and estimate. Outputs: Thick green dashed baseline, with no duplicate.
 void DrawPhotoPeakBackground(TVirtualPad* pad, TH1* histogram,
   const PhotoPeakBackgroundEstimate& estimate) {
   RemovePhotoPeakBackground(pad, histogram);
@@ -94,7 +94,7 @@ void DrawPhotoPeakBackground(TVirtualPad* pad, TH1* histogram,
   drawing->SetStats(false);
   drawing->SetLineColor(kGreen + 2);
   drawing->SetLineWidth(3);
-  drawing->SetLineStyle(1);
+  drawing->SetLineStyle(7);
   drawing->Draw("hist same");
 }
 
