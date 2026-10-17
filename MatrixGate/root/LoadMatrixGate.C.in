@@ -1,0 +1,19 @@
+#include <TInterpreter.h>
+#include <TString.h>
+#include <TSystem.h>
+
+// ============== LoadMatrixGate ==============
+// Purpose: Load MatrixGate from a build or relocated installation prefix.
+// Inputs: None; this macro resides beside the include and library directories.
+// Outputs: Loaded library and public declarations, or a ROOT diagnostic.
+void LoadMatrixGate() {
+  const TString prefix = gSystem->DirName(__FILE__);
+  const TString library = prefix + "/@CMAKE_INSTALL_LIBDIR@/libMatrixGate";
+  if(gSystem->Load(library) < 0) {
+    Error("LoadMatrixGate", "cannot load %s", library.Data());
+    return;
+  }
+  gInterpreter->AddIncludePath(prefix + "/@CMAKE_INSTALL_INCLUDEDIR@");
+  if(!gInterpreter->Declare("#include <MatrixGate/MatrixGateRoot.h>"))
+    Error("LoadMatrixGate", "cannot declare the MatrixGate API");
+}

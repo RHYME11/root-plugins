@@ -1,0 +1,22 @@
+#ifdef __CLING__
+#pragma link off all globals;
+#pragma link off all classes;
+#pragma link off all functions;
+#pragma link C++ namespace MatrixGate;
+#pragma link C++ enum MatrixGate::Axis;
+#pragma link C++ enum MatrixGate::Combination;
+#pragma link C++ enum MatrixGate::SubtractionModel;
+#pragma link C++ enum MatrixGate::BackgroundTemplate;
+#pragma link C++ enum MatrixGate::FractionMethod;
+#pragma link C++ enum MatrixGate::ErrorPolicy;
+#pragma link C++ class MatrixGate::Gate+;
+#pragma link C++ class std::vector<MatrixGate::Gate>+;
+#pragma link C++ class MatrixGate::FlowPolicy+;
+#pragma link C++ class MatrixGate::BackgroundConfig+;
+#pragma link C++ class MatrixGate::Config+;
+#pragma link C++ class MatrixGate::GateBins+;
+#pragma link C++ class std::vector<MatrixGate::GateBins>+;
+#pragma link C++ class MatrixGate::Projection-;
+#pragma link C++ class MatrixGate::Result-;
+#pragma link C++ function MatrixGate::Compute;
+#endif

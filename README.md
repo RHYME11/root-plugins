@@ -3,6 +3,9 @@
 Optional plugins for CERN ROOT. Each plugin is an independent top-level unit.
 PhotoPeakFit runs directly in native ROOT with an English, non-modal fitting
 control panel linked to the existing histogram canvas.
+MatrixGate provides read-only TH2 projections through a separate ROOT library.
+Its first stage supports X/Y gates, Separate/Sum/Union, and statistical errors;
+background subtraction, the control window, and fitting integration are later stages.
 
 ## Build
 
@@ -13,9 +16,10 @@ compiler are required. With `root-config` available in your environment:
 make
 ```
 
-This builds `build/lib/libPhotoPeakFit.dylib` on macOS, or
-`build/lib/libPhotoPeakFit.so` on Linux, together with its ROOT dictionary and
-`build/LoadPhotoPeakFit.C`. No application-specific host is required.
+This builds `build/lib/libPhotoPeakFit.dylib` and `build/lib/libMatrixGate.dylib`
+on macOS (`.so` on Linux), together with their ROOT dictionaries and independent
+`build/LoadPhotoPeakFit.C` and `build/LoadMatrixGate.C` loaders.
+No application-specific host is required.
 
 Equivalent CMake commands:
 
@@ -24,18 +28,21 @@ cmake -S . -B build
 cmake --build build -j4
 ```
 
-PhotoPeakFit also has an independent CMake entry:
+Each plugin also has an independent CMake entry:
 
 ```bash
 cmake -S PhotoPeakFit -B build-photopeak
 cmake --build build-photopeak -j4
+
+cmake -S MatrixGate -B build-matrixgate
+cmake --build build-matrixgate -j4
 ```
 
 Use `make BUILD_DIR=tests/custom-build` for a custom output directory. To select
 a ROOT installation explicitly, pass `-DROOT_DIR=/path/to/root/lib/cmake/ROOT`
 (or its build-tree configuration directory) when configuring with CMake.
 
-## Run in ROOT
+## Run PhotoPeakFit in ROOT
 
 Start native ROOT and load the generated macro:
 
@@ -197,11 +204,106 @@ operations run on ROOT's main GUI thread.
 ```bash
 cmake --install build --prefix /path/to/photopeakfit
 root -l /path/to/photopeakfit/LoadPhotoPeakFit.C
+root -l /path/to/photopeakfit/LoadMatrixGate.C
 ```
 
 Keep the loader, `include/`, and library directory together. The installed
 library, ROOT dictionary, and headers support moving the complete prefix.
 Native `TCanvas` is supported; web canvases and `RCanvas` are outside this stage.
+
+## MatrixGate projections
+
+Load the independent plugin in native ROOT, including batch mode:
+
+```bash
+root -l build/LoadMatrixGate.C
+```
+
+The following example is self-contained at the ROOT prompt:
+
+```cpp
+TH2D matrix("example_matrix", "Example;Energy [keV];Time [ns]", 3, 0, 3, 2, 10, 30);
+matrix.SetDirectory(nullptr);
+matrix.SetBinContent(1, 1, 3);
+matrix.SetBinContent(2, 1, 5);
+
+MatrixGate::Config config;
+config.gateAxis = MatrixGate::Axis::X;
+config.combination = MatrixGate::Combination::Sum;
+config.gates = {{1, "First", 0, 2, true}, {2, "Second", 1, 3, true}};
+auto result = MatrixGate::Compute(matrix, config);
+std::cout << result.Report();
+
+// After checking result.success, draw the owned spectra.
+auto* gateCanvas = new TCanvas("matrix_gate", "MatrixGate projections", 1000, 500);
+gateCanvas->Divide(2, 1);
+gateCanvas->cd(1);
+result.projections[0].raw->Draw("hist");
+gateCanvas->cd(2);
+result.total->Draw("hist");
+```
+
+`result.total` is the total projection **on the gate axis**; each
+`result.projections[i].raw` is the gated projection on the other axis. Setting
+`gateAxis = MatrixGate::Axis::Y` reverses these roles. The example's first output
+bin is 13, with variance 23: the overlapping source bin contributes twice to the
+content and four times to the variance.
+
+Each gate has `{id, name, low, high, enabled}`. IDs must be unique and nonzero,
+including disabled gates. Enabled gates require finite coordinates satisfying
+`axis minimum <= low < high <= axis maximum`. Coordinates use **[low, high)**:
+the bin starting exactly at `high` is excluded. The selected interval expands to
+complete intersecting bins; `GateBins` and `Report()` preserve both the requested
+coordinates and actual edges, indices, and physical width. Variable bin edges,
+axis titles, and bin labels are retained. Invalid enabled gates fail explicitly;
+out-of-axis coordinates are not silently clipped. Disabled gates retain their
+settings without contributing to the calculation. No enabled gates produces
+only the total projection.
+
+| Combination | Output |
+|---|---|
+| `Separate` (default) | One spectrum per enabled gate, retaining input order and IDs |
+| `Sum` | One spectrum; shared bins contribute once for each selecting gate |
+| `Union` | One spectrum; each selected source bin contributes once |
+
+For source-bin weights `w`, contents use `sum(w * content)` and variances use
+`sum(w * w * sourceVariance)`. This includes the covariance caused by selecting
+the same bin repeatedly in Sum. Source-bin errors come from ROOT's `GetBinError`:
+existing Sumw2 is retained; without it ROOT uses the square root of the absolute
+content. Negative contents are preserved. Source cells are treated as independent;
+physical correlations between different cells, including correlated symmetric
+matrix filling, are not inferred. Separate output spectra may share cells and
+are not necessarily statistically independent.
+
+All flow bins are excluded by default. `config.flow` provides independent flags:
+
+| Flag | Effect |
+|---|---|
+| `gateUnderflow` / `gateOverflow` | Include gate-axis flow bins in the total and in gates whose requested lower/upper endpoint touches the axis minimum/maximum |
+| `resultUnderflow` / `resultOverflow` | Include result-axis flow bins in gated spectra and in the total projection's sums |
+
+Recorded widths cover normal bins only. Sum widths include multiplicities;
+Union widths count each normal bin once. Flow bins have no finite physical width.
+
+`Compute` reads rectangular TH2 variants, including TH2D/F/I, without modifying
+their contents, errors, statistics, directory ownership, or axis ranges. TH2Poly
+and inputs with pending buffered fills are rejected; explicitly flush a pending
+fill buffer before computing. Source zoom does not restrict the sums. Each call
+recomputes from current bins and returns independent detached TH1D snapshots,
+even after the input file closes. Keep the move-only `Result` alive while using
+its spectra; destroy it or move it to transfer ownership. A failure returns
+`success=false`, a diagnostic in `message`, and no partial spectra.
+
+Only `background.model=None`, `background.selection=None`, default background
+settings, and `errors=FixedCoefficients` are implemented in this stage. Other
+declared background models and error policies are reserved and rejected. There
+is no MatrixGate session/control window yet; drawing the returned spectra uses
+ordinary ROOT canvases. MatrixGate does not link to PhotoPeakFit or GRSISort.
+
+The calculation lives in `MatrixGate/common/`, the public types in
+`MatrixGate/include/MatrixGate/`, and the ROOT entry, dictionary, and loader in
+`MatrixGate/root/`. GUI, sessions, background calculations, export, and the
+optional PhotoPeakFit connector will build on these layers.
 
 ## Code structure
 
@@ -220,8 +322,10 @@ event routing. Explicit fit calls can also run in ROOT batch mode.
 
 ## Tests
 
-All test sources and generated test artifacts stay under `tests/`. Configure a
-fresh test build and run the automated checks:
+All test sources and generated test artifacts stay under `tests/`, which the
+current repository ignores in Git. These commands require the local test sources;
+test sources and data fixtures are not included in a fresh checkout. Configure a
+fresh test build and run the automated PhotoPeakFit checks:
 
 ```bash
 cmake -S . -B tests/root-build -DPHOTOPEAK_BUILD_TESTS=ON
@@ -252,8 +356,23 @@ selection after sorting, invalid draft retention, mode switching, Fit button/key
 equivalence, Delete, Clean, close actions, and scrollbar visibility on first
 display and reopening, relative-width checkbox/editor consistency, and immediate
 result updates after fitting and refitting. Test data, generated libraries, and logs stay ignored;
-only focused test source files are versioned.
+test source files follow the same local-only policy.
 Long-report checks inspect the native viewport pixels through scrolling,
 selection, resizing, replacement, clearing, and reopening.
 Native GUI tests also open the actual Shift+E axis dialog, apply a range, cancel
 it, and check that other pads and the existing fit stay unchanged.
+
+The local MatrixGate numerical and interpreted-loader tests can be enabled with:
+
+```bash
+cmake -S . -B tests/matrixgate-build -DMATRIXGATE_BUILD_TESTS=ON -DPHOTOPEAK_BUILD_TESTS=ON
+cmake --build tests/matrixgate-build -j4
+ctest --test-dir tests/matrixgate-build --output-on-failure
+```
+
+MatrixGate checks cover non-square matrices in both directions, overlapping
+Separate/Sum/Union gates, weighted and negative bins, variable edges, exact
+boundaries, flow policies, stable IDs, disabled gates, input/global-state
+preservation, independent snapshots, file closure, invalid requests, and explicit
+rejection of background modes not yet implemented. Its loader smoke test calls
+the public API through Cling and checks shared-bin statistical propagation.
