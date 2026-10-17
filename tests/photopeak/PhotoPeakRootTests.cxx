@@ -3,12 +3,14 @@
 #include <PhotoPeakFit/PhotoPeakFitter.h>
 #include <PhotoPeakFit/PhotoPeakControlWindow.h>
 #include <PhotoPeakFit/detail/PhotoPeakRootController.h>
+#include "PhotoPeakResultView.h"
 
 #include <cmath>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <Buttons.h>
 #include <KeySymbols.h>
@@ -706,6 +708,89 @@ void AxisRangeShortcut() {
   PhotoPeakFit::StopAll();
 }
 
+class ResultViewProbe : public PhotoPeakResultView {
+public:
+  using PhotoPeakResultView::PhotoPeakResultView;
+
+  // ============== ResultViewProbe::Highlight ==============
+  // Purpose: Exercise selected-text painting without changing the clipboard.
+  // Inputs: Loaded report. Outputs: Full report marked for rendering.
+  void Highlight() {
+    fIsMarked = true;
+    fMarkedStart = {0, 0};
+    const auto last = fText->RowCount() - 1;
+    fMarkedEnd = {fText->GetLineLength(last), last};
+  }
+
+  // ============== ResultViewProbe::Pixels ==============
+  // Purpose: Inspect the actual native backing pixels after a bounded repaint.
+  // Inputs: Current report and viewport. Outputs: RGBA image with checked dimensions.
+  std::vector<unsigned char> Pixels() {
+    DrawRegion(0, 0, GetWidth(), GetHeight());
+    gVirtualX->Update(1);
+    UInt_t width = 0, height = 0;
+    gVirtualX->GetImageSize(fBuffer, width, height);
+    Check(width == GetCanvas()->GetWidth() && height == GetCanvas()->GetHeight(),
+      "native results drawing surface exactly matches the visible viewport");
+    std::unique_ptr<unsigned char[]> pixels(gVirtualX->GetColorBits(fBuffer, 0, 0, width, height));
+    Check(pixels != nullptr, "native results drawing surface is readable");
+    return {pixels.get(), pixels.get() + width * height * 4};
+  }
+};
+
+// ============== ResultViewport ==============
+// Purpose: Regress long-report clipping, native pixels, selection and scrolling.
+// Inputs: Interactive ROOT application. Outputs: Checked bounded report rendering.
+void ResultViewport() {
+  TGMainFrame frame(gClient->GetRoot(), 350, 230);
+  frame.SetCleanup(kDeepCleanup);
+  auto* view = new ResultViewProbe(&frame, 330, 210);
+  frame.AddFrame(view, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 6, 6));
+  frame.MapSubwindows();
+  frame.Resize(350, 230);
+  frame.MapWindow();
+  std::string report;
+  for(int row = 0; row < 80; ++row)
+    report += "Peak " + std::to_string(row + 1) + ": Position = 1205.050222 +/- 0.06629150331 " +
+      std::string(100, static_cast<char>('A' + row % 26)) + "\n";
+  view->LoadBuffer(report.c_str());
+  gSystem->ProcessEvents();
+  Check(view->GetScrollPosition().fX == 0 && view->GetScrollPosition().fY == 0,
+    "new report opens at its first line");
+  const auto fullText = view->GetText()->AsString();
+  const auto top = view->Pixels();
+  view->Clear();
+  const auto blank = view->Pixels();
+  Check(top != blank, "native backing image contains rendered report glyphs");
+  view->LoadBuffer(report.c_str());
+  view->SetHsbPosition(20);
+  view->SetVsbPosition(15);
+  gSystem->ProcessEvents();
+  Check(view->GetScrollPosition().fX > 0 && view->GetScrollPosition().fY > 0,
+    "long report scrolls horizontally and vertically");
+  const auto scrolled = view->Pixels();
+  Check(scrolled != top && view->GetText()->AsString() == fullText,
+    "scrolling changes the visible pixels while retaining the complete report");
+  view->Highlight();
+  Check(view->Pixels() != scrolled, "selected text is painted within the same bounded surface");
+  frame.Resize(470, 320);
+  frame.Layout();
+  gSystem->ProcessEvents();
+  Check(view->Pixels().size() > scrolled.size(), "resizing rebuilds the native viewport surface");
+  view->LoadBuffer("Latest fit: Position = 100.4");
+  gSystem->ProcessEvents();
+  Check(view->GetScrollPosition().fX == 0 && view->GetScrollPosition().fY == 0,
+    "replacement report resets the viewport to the latest fit");
+  const auto latest = view->Pixels();
+  view->Clear();
+  const auto empty = view->Pixels();
+  Check(latest != empty, "replacing and clearing reports repaints the native image");
+  frame.UnmapWindow();
+  frame.MapWindow();
+  gSystem->ProcessEvents();
+  Check(view->Pixels() == empty, "reopening an empty report does not restore stale text pixels");
+}
+
 // ============== GuiControls ==============
 // Purpose: Verify real English controls, draft submission, stable selection and results.
 // Inputs: Interactive ROOT application. Outputs: Checked four-page control panel.
@@ -731,6 +816,7 @@ void GuiControls() {
   Check(initialList && !initialList->GetScrollBar()->IsMapped(),
     "empty peak list has no mapped scrollbar on first show");
   Check(initialResults, "results view exists on first show");
+  Check(dynamic_cast<PhotoPeakResultView*>(initialResults), "control panel uses the bounded results renderer");
   auto* relativeFwhm = FindWidget<TGCheckButton>(window, 109);
   Check(relativeFwhm && !relativeFwhm->IsEnabled() && relativeFwhm->IsDisabledAndSelected(),
     "stored relative-width preference is visibly checked while inactive");
@@ -1088,6 +1174,7 @@ int main(int argc, char** argv) {
       SessionState();
       if(gui) {
         AxisRangeShortcut();
+        ResultViewport();
         GuiControls();
       }
     }

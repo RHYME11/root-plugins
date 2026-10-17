@@ -1,5 +1,6 @@
 add_executable(photopeak_tests PhotoPeakRootTests.cxx)
 target_link_libraries(photopeak_tests PRIVATE PhotoPeakFit)
+target_include_directories(photopeak_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../PhotoPeakFit/gui")
 add_test(NAME photopeak_root COMMAND photopeak_tests)
 add_test(NAME photopeak_loader COMMAND "${ROOT_BINDIR}/root" -l -b -q
   "${CMAKE_BINARY_DIR}/LoadPhotoPeakFit.C" "${CMAKE_CURRENT_SOURCE_DIR}/LoadSmoke.C")

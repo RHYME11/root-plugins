@@ -137,6 +137,8 @@ mode and ROOT options, effective background settings, relative constraints,
 model/status, chi-square, grouped peak values and areas, and named raw fit
 parameters. Fixed values, actual parameter limits, derived positions/widths,
 and parameters inactive in the selected model are identified explicitly.
+Long reports remain inside the Results viewport, including on macOS. Scroll
+horizontally or vertically to read the full report; text selection is retained.
 
 Multi-peak plots draw each colored component as the common fitted background plus
 that peak's contribution. All components share the dashed black background,
@@ -251,5 +253,7 @@ equivalence, Delete, Clean, close actions, and scrollbar visibility on first
 display and reopening, relative-width checkbox/editor consistency, and immediate
 result updates after fitting and refitting. Test data, generated libraries, and logs stay ignored;
 only focused test source files are versioned.
+Long-report checks inspect the native viewport pixels through scrolling,
+selection, resizing, replacement, clearing, and reopening.
 Native GUI tests also open the actual Shift+E axis dialog, apply a range, cancel
 it, and check that other pads and the existing fit stay unchanged.

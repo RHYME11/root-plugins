@@ -19,6 +19,7 @@ add_library(PhotoPeakFit SHARED
   session/PhotoPeakDrawController.cxx
   gui/PhotoPeakControlWindow.cxx
   gui/PhotoPeakParameterRow.cxx
+  gui/PhotoPeakResultView.cxx
   root/PhotoPeakRoot.cxx
 )
 target_compile_features(PhotoPeakFit PUBLIC cxx_std_17)

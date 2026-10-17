@@ -27,6 +27,7 @@
 
 #include "PhotoPeakParameterRow.h"
 #include "PhotoPeakEntry.h"
+#include "PhotoPeakResultView.h"
 
 namespace {
 enum ControlId {
@@ -309,7 +310,7 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   fImpl->resultStatus->SetTextJustify(kTextLeft);
   fImpl->resultStatus->SetWrapLength(440);
   results->AddFrame(fImpl->resultStatus, new TGLayoutHints(kLHintsExpandX, 6, 6, 5, 5));
-  fImpl->results = new TGTextView(results, 440, 380);
+  fImpl->results = new PhotoPeakResultView(results, 440, 380);
   results->AddFrame(fImpl->results, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 2, 6));
   AddFrame(fImpl->tabs, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 4, 4));
 
