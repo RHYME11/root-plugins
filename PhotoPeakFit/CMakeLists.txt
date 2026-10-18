@@ -66,6 +66,12 @@ install(FILES
 option(PHOTOPEAK_BUILD_TESTS "Build PhotoPeakFit ROOT integration tests" OFF)
 if(PHOTOPEAK_BUILD_TESTS)
   enable_testing()
-  add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../tests/photopeak"
-    "${CMAKE_BINARY_DIR}/photopeak-tests")
+  add_executable(photopeak_shared_targets_tests
+    "${CMAKE_CURRENT_SOURCE_DIR}/../tests/photopeak/PhotoPeakSharedTargetsTests.cxx")
+  target_link_libraries(photopeak_shared_targets_tests PRIVATE PhotoPeakFit)
+  add_test(NAME photopeak_shared_targets COMMAND photopeak_shared_targets_tests)
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tests/photopeak/CMakeLists.txt")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../tests/photopeak"
+      "${CMAKE_BINARY_DIR}/photopeak-tests")
+  endif()
 endif()

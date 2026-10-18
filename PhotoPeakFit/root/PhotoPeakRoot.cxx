@@ -1,11 +1,14 @@
 #include <PhotoPeakFit/PhotoPeakRoot.h>
 #include <PhotoPeakFit/PhotoPeakSession.h>
+#include <PhotoPeakFit/PhotoPeakControlWindow.h>
+#include <TPave.h>
 
 #include <PhotoPeakFit/detail/PhotoPeakRootController.h>
 #include "PhotoPeakTarget.h"
 
 #include <algorithm>
 #include <set>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -88,14 +91,26 @@ public:
   // Purpose: Find one active pad session.
   // Inputs: Pad identity.
   // Outputs: Borrowed session or null.
-  PhotoPeakSession* Find(TVirtualPad* pad) {
+  PhotoPeakSession* Find(TVirtualPad* pad, TH1* histogram = nullptr) {
+    if(!histogram && active && !active->IsClosed() && active->Pad() == pad) return active;
+    if(!histogram) {
+      auto found = remembered.find(pad);
+      if(found != remembered.end() && !found->second->IsClosed()) return found->second;
+    }
     for(const auto& session : sessions) {
-      if(!session->IsClosed() && session->Pad() == pad)
+      if(!session->IsClosed() && session->Pad() == pad && (!histogram || session->Histogram() == histogram))
         return session.get();
     }
     return nullptr;
   }
 
+  std::map<TVirtualPad*, PhotoPeakSession*> remembered;
+  PhotoPeakSession* active = nullptr;
+  PhotoPeakSession* previous = nullptr;
+  std::unique_ptr<PhotoPeakControlWindow> parkedWindow;
+  std::unique_ptr<TPave> border;
+  TVirtualPad* borderPad = nullptr;
+  TCanvas* borderCanvas = nullptr;
   std::vector<std::unique_ptr<PhotoPeakSession>> sessions;
   std::set<TCanvas*> canvases;
   SessionTimer timer;
@@ -141,10 +156,6 @@ PhotoPeakRootController::~PhotoPeakRootController() {
 bool PhotoPeakRootController::Start(TH1* histogram, TVirtualPad* pad) {
   fImpl->error.clear();
   Poll();
-  fImpl->sessions.erase(std::remove_if(fImpl->sessions.begin(), fImpl->sessions.end(),
-    [](const std::unique_ptr<PhotoPeakSession>& session) {
-      return session->IsClosed();
-    }), fImpl->sessions.end());
   if(!pad)
     pad = gPad;
   TCanvas* canvas = pad ? pad->GetCanvas() : nullptr;
@@ -156,20 +167,20 @@ bool PhotoPeakRootController::Start(TH1* histogram, TVirtualPad* pad) {
     fImpl->error = "PhotoPeakFit requires a native ROOT TCanvas";
     return false;
   }
-  if(auto* active = fImpl->Find(pad)) {
-    if(histogram && histogram != active->Histogram()) {
-      fImpl->error = "this pad already has a session; stop it before switching targets";
-      return false;
+  TH1* target = histogram;
+  if(!target && fImpl->Find(pad)) target = fImpl->Find(pad)->Histogram();
+  if(!target) {
+    TIter next(pad->GetListOfPrimitives());
+    while(auto* object = next()) {
+      auto* candidate = dynamic_cast<TH1*>(object);
+      if(candidate && candidate->GetDimension() == 1 && std::string(candidate->GetName()).find("PhotoPeakBackground_") != 0) { target = candidate; break; }
     }
-    active->RaiseWindow();
-    return true;
   }
-  TH1* target = ResolvePhotoPeakTarget(pad, canvas->GetSelected(), histogram,
-    fImpl->error);
-  if(!target)
-    return false;
-  for(const auto& active : fImpl->sessions) {
-    if(!active->IsClosed() && active->Histogram() == target) {
+  target = ResolvePhotoPeakTarget(pad, canvas->GetSelected(), target, fImpl->error);
+  if(!target) return false;
+  if(auto* existing = fImpl->Find(pad, target)) { Activate(existing); return true; }
+  for(const auto& existing : fImpl->sessions) {
+    if(!existing->IsClosed() && existing->Histogram() == target) {
       fImpl->error = "this histogram already has a fit session in another pad";
       return false;
     }
@@ -187,7 +198,8 @@ bool PhotoPeakRootController::Start(TH1* histogram, TVirtualPad* pad) {
     fImpl->canvases.insert(canvas);
   }
   target->SetBit(TObject::kMustCleanup);
-  fImpl->sessions.push_back(std::make_unique<PhotoPeakSession>(canvas, pad, target));
+  fImpl->sessions.push_back(std::make_unique<PhotoPeakSession>(canvas, pad, target, false));
+  Activate(fImpl->sessions.back().get());
   if(!gROOT->IsBatch() && gClient && !fImpl->guiConnected)
     fImpl->guiConnected = gClient->Connect(kGuiEvent, kController, this,
       "OnGuiEvent(Event_t*,Window_t)");
@@ -218,7 +230,7 @@ bool PhotoPeakRootController::RefreshSnapshot(TH1* target, const TH1* snapshot, 
   if(!target || !snapshot || snapshot->GetDimension() != 1 || target->IsA() != snapshot->IsA() || !pad) {
     fImpl->error = "Snapshot refresh requires matching one-dimensional histograms and a live pad."; return false;
   }
-  if(auto* session = fImpl->Find(pad)) {
+  if(auto* session = fImpl->Find(pad, target)) {
     if(session->Histogram() != target || !session->RefreshSnapshot(*snapshot)) {
       fImpl->error = "Snapshot refresh failed; finish invalid PhotoPeakFit edits or close its current dialog first."; return false;
     }
@@ -265,8 +277,18 @@ bool PhotoPeakRootController::Stop(TVirtualPad* pad) {
 // Outputs: Released heavy resources and detached canvas and GUI hooks.
 void PhotoPeakRootController::StopAll() {
   fImpl->error.clear();
+  if(fImpl->border && IsPhotoPeakPadAlive(fImpl->borderCanvas, fImpl->borderPad))
+    fImpl->borderPad->GetListOfPrimitives()->Remove(fImpl->border.get());
+  fImpl->border.reset();
   for(const auto& session : fImpl->sessions)
     session->Abandon();
+  fImpl->active = nullptr;
+  fImpl->previous = nullptr;
+  if(fImpl->parkedWindow) {
+    auto* window = fImpl->parkedWindow.release();
+    window->DetachSession();
+    window->DeleteWindow();
+  }
   Poll();
 }
 
@@ -290,8 +312,19 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
   TVirtualPad* pad = canvas->GetSelectedPad();
   if(!pad)
     pad = canvas;
-  auto* session = fImpl->Find(pad);
-  if(!session || !session->ValidateTarget())
+  if(event == kButton1Down || event == kButton1Shift || event == kButton1Double) {
+    auto* candidate = fImpl->Find(pad);
+    if(!candidate || candidate != fImpl->active) {
+      Start(candidate ? candidate->Histogram() : nullptr, pad);
+      return;
+    }
+    if(gVirtualX && canvas->GetCanvasID() >= 0)
+      gVirtualX->SetInputFocus(gVirtualX->GetWindowID(canvas->GetCanvasID()));
+  }
+  if((event == kKeyPress || event == kArrowKeyPress) && fImpl->active &&
+     !fImpl->active->IsClosed() && fImpl->active->Canvas() == canvas) pad = fImpl->active->Pad();
+  auto* session = fImpl->active;
+  if(!session || session->Pad() != pad || !session->ValidateTarget())
     return;
   if(event == kButton1Up && fImpl->escapeCanvas == canvas) {
     fImpl->escapeCanvas = nullptr;
@@ -404,6 +437,8 @@ void PhotoPeakRootController::OnCanvasClosed() {
 // Inputs: Object being removed by ROOT.
 // Outputs: Abandoned sessions; callback receivers stay alive until a safe entry.
 void PhotoPeakRootController::RecursiveRemove(TObject* object) {
+  fImpl->remembered.erase(dynamic_cast<TVirtualPad*>(object));
+  if(object == fImpl->border.get()) fImpl->border.release();
   for(const auto& session : fImpl->sessions) {
     if(session->IsClosed())
       continue;
@@ -419,6 +454,13 @@ void PhotoPeakRootController::RecursiveRemove(TObject* object) {
 // Inputs: API entry or synchronous timer tick.
 // Outputs: Safe inactive sessions and no unnecessary event hooks.
 void PhotoPeakRootController::Poll() {
+  if(fImpl->active && fImpl->active->IsClosed() && fImpl->border) {
+    if(IsPhotoPeakPadAlive(fImpl->borderCanvas, fImpl->borderPad)) {
+      fImpl->borderPad->GetListOfPrimitives()->Remove(fImpl->border.get());
+      fImpl->borderPad->Modified();
+    }
+    fImpl->border.reset();
+  }
   for(const auto& session : fImpl->sessions) {
     if(!session->IsClosed())
       session->ValidateTarget();
@@ -491,3 +533,79 @@ const char* LastError() {
 }
 
 } // namespace PhotoPeakFit
+
+// ============== PhotoPeakRootController::Activate ==============
+// Purpose: Switch the single editor without committing or discarding target drafts.
+// Inputs: Live session. Outputs: Active layer, focused canvas and selection border.
+void PhotoPeakRootController::Activate(PhotoPeakSession* session) {
+  if(!session || session->IsClosed() || session->State().fitting) return;
+  if(fImpl->active && fImpl->active->State().fitting) return;
+  fImpl->remembered[session->Pad()] = session;
+  if(session != fImpl->active) {
+    auto window = std::move(fImpl->parkedWindow);
+    if(fImpl->active && !fImpl->active->IsClosed()) window = fImpl->active->TakeWindow();
+    fImpl->previous = fImpl->active;
+    fImpl->active = session;
+    if(!window && !gROOT->IsBatch()) window = std::make_unique<PhotoPeakControlWindow>(session);
+    session->AdoptWindow(std::move(window));
+  } else session->RaiseWindow();
+  if(fImpl->border && IsPhotoPeakPadAlive(fImpl->borderCanvas, fImpl->borderPad)) {
+    fImpl->borderPad->GetListOfPrimitives()->Remove(fImpl->border.get());
+    fImpl->borderPad->Modified();
+  }
+  fImpl->border.reset();
+  fImpl->borderPad = session->Pad();
+  fImpl->borderCanvas = session->Canvas();
+  fImpl->border = std::make_unique<TPave>(0.004, 0.004, 0.996, 0.996, 1, "NDC");
+  fImpl->border->SetFillStyle(0);
+  fImpl->border->SetLineColor(kRed);
+  fImpl->border->SetLineWidth(2);
+  fImpl->border->SetBit(TObject::kCannotPick);
+  fImpl->border->SetBit(TObject::kMustCleanup);
+  fImpl->borderPad->GetListOfPrimitives()->Add(fImpl->border.get());
+  fImpl->borderPad->Modified();
+  fImpl->borderPad->Update();
+  auto* canvas = session->Canvas();
+  if(gVirtualX && canvas->GetCanvasID() >= 0)
+    gVirtualX->SetInputFocus(gVirtualX->GetWindowID(canvas->GetCanvasID()));
+}
+
+// ============== PhotoPeakRootController::SelectLayer ==============
+// Purpose: Activate a directly drawn one-dimensional histogram. Inputs: Layer index. Outputs: Status.
+bool PhotoPeakRootController::SelectLayer(int index) {
+  if(!fImpl->active || fImpl->active->IsClosed()) return false;
+  auto* pad = fImpl->active->Pad();
+  int layer = 0;
+  TIter next(pad->GetListOfPrimitives());
+  while(auto* object = next()) {
+    auto* histogram = dynamic_cast<TH1*>(object);
+    if(histogram && histogram->GetDimension() == 1 && std::string(histogram->GetName()).find("PhotoPeakBackground_") != 0 && ++layer == index) return Start(histogram, pad);
+  }
+  return false;
+}
+
+// ============== PhotoPeakRootController::CopyPrevious ==============
+// Purpose: Explicitly overwrite the active layer from the last target. Inputs: None. Outputs: Status.
+bool PhotoPeakRootController::CopyPrevious() {
+  if(!fImpl->active || !fImpl->previous || fImpl->previous->IsClosed()) return false;
+  return fImpl->active->CopySettings(*fImpl->previous);
+}
+
+// ============== PhotoPeakRootController::ParkEditor ==============
+// Purpose: Retain other targets' drafts when the active target disappears.
+// Inputs: Closing session. Outputs: Hidden reusable shared editor.
+void PhotoPeakRootController::ParkEditor(PhotoPeakSession* session) {
+  if(fImpl->active != session) return;
+  auto window = session->TakeWindow();
+  if(window) {
+    window->Bind(nullptr);
+    window->Hide();
+    fImpl->parkedWindow = std::move(window);
+  }
+}
+
+// ============== PhotoPeakRootController::ActiveSession ==============
+// Purpose: Inspect the current fit layer. Inputs: None. Outputs: Live session or null.
+PhotoPeakSession* PhotoPeakRootController::ActiveSession() const {
+  return fImpl->active && !fImpl->active->IsClosed() ? fImpl->active : nullptr;
+}

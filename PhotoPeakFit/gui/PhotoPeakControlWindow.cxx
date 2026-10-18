@@ -4,6 +4,10 @@
 #include <array>
 #include <sstream>
 #include <set>
+#include <map>
+#include <functional>
+#include <PhotoPeakFit/detail/PhotoPeakRootController.h>
+#include <TList.h>
 #include <vector>
 
 #include <TGButton.h>
@@ -31,6 +35,9 @@
 
 namespace {
 enum ControlId {
+  kLayer = 800,
+  kCopyPrevious,
+  kUndoCopy,
   kFit = 100,
   kClean,
   kExitMode,
@@ -157,6 +164,22 @@ void ToggleBackgroundOption(TGPopupMenu* menu, int identifier) {
 
 class PhotoPeakControlWindow::Impl {
 public:
+  struct Draft {
+    std::vector<std::pair<TGTextEntry*, std::string>> texts;
+    std::vector<std::pair<TGComboBox*, int>> combos;
+    std::vector<std::pair<TGCheckButton*, bool>> checks;
+    std::string backgroundOptions;
+    bool dirty = false;
+    int tab = 0;
+    std::uint64_t peak = 0;
+  };
+  std::map<PhotoPeakSession*, Draft> drafts;
+  PhotoPeakSession* previous = nullptr;
+  std::map<PhotoPeakSession*, Draft> undoDrafts;
+  TGLabel* copySource = nullptr;
+  TGTextButton* copyButton = nullptr;
+  TGTextButton* undoButton = nullptr;
+  TGComboBox* layer = nullptr;
   PhotoPeakSession* session = nullptr;
   TGLabel* target = nullptr;
   TGLabel* status = nullptr;
@@ -216,6 +239,21 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   fImpl->target->SetTextJustify(kTextLeft);
   fImpl->target->SetWrapLength(450);
   AddFrame(fImpl->target, new TGLayoutHints(kLHintsExpandX, 8, 8, 6, 2));
+  auto* layers = new TGHorizontalFrame(this);
+  layers->AddFrame(new TGLabel(layers, "Fit layer"), new TGLayoutHints(kLHintsCenterY, 4, 4));
+  fImpl->layer = new TGComboBox(layers, kLayer);
+  fImpl->layer->Resize(240, 24);
+  fImpl->layer->Associate(this);
+  layers->AddFrame(fImpl->layer, new TGLayoutHints(kLHintsExpandX, 4, 4));
+  AddFrame(layers, new TGLayoutHints(kLHintsExpandX, 5, 5, 3, 3));
+  fImpl->copySource = new TGLabel(this, "Copy source: none");
+  fImpl->copySource->SetTextJustify(kTextLeft);
+  fImpl->copySource->SetWrapLength(450);
+  AddFrame(fImpl->copySource, new TGLayoutHints(kLHintsExpandX, 8, 8, 2, 2));
+  auto* copying = new TGHorizontalFrame(this);
+  fImpl->copyButton = addButton(copying, "Overwrite from previous target", kCopyPrevious);
+  fImpl->undoButton = addButton(copying, "Undo overwrite", kUndoCopy);
+  AddFrame(copying, new TGLayoutHints(kLHintsExpandX, 5, 5));
   auto* tools = new TGHorizontalFrame(this);
   fImpl->tools[0] = addButton(tools, "Pick peaks", kPickPeaks);
   fImpl->tools[1] = addButton(tools, "Browse", kBrowse);
@@ -419,6 +457,42 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
       fImpl->tabs->SetTab(fImpl->activeTab, false);
     return kTRUE;
   }
+  if(parameter1 == kLayer) {
+    PhotoPeakRootController::Instance().SelectLayer(static_cast<int>(parameter2));
+    return kTRUE;
+  }
+  if(parameter1 == kCopyPrevious) {
+    auto* current = fImpl->session;
+    auto* previous = fImpl->previous;
+    Bind(nullptr);
+    fImpl->undoDrafts[current] = fImpl->drafts[current];
+    Bind(current);
+    fImpl->previous = previous;
+    if(PhotoPeakRootController::Instance().CopyPrevious() && previous) {
+      const auto source = fImpl->drafts.find(previous);
+      if(source != fImpl->drafts.end()) {
+        auto copied = source->second;
+        fImpl->session = nullptr;
+        fImpl->drafts[current] = std::move(copied);
+        Bind(current);
+        fImpl->previous = previous;
+      }
+    }
+    return kTRUE;
+  }
+  if(parameter1 == kUndoCopy) {
+    auto* current = fImpl->session;
+    if(current->UndoCopy()) {
+      const auto found = fImpl->undoDrafts.find(current);
+      if(found != fImpl->undoDrafts.end()) {
+        fImpl->session = nullptr;
+        fImpl->drafts[current] = found->second;
+        Bind(current);
+        fImpl->undoDrafts.erase(found);
+      }
+    }
+    return kTRUE;
+  }
   if(parameter1 == kClean) { fImpl->session->Clean(); return kTRUE; }
   if(parameter1 == kExitMode) { CloseWindow(); return kTRUE; }
   if(parameter1 == kBrowse) { fImpl->session->SetInteraction(PhotoPeakInteraction::Browse); return kTRUE; }
@@ -492,6 +566,21 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
   fImpl->refreshing = true;
   const auto& state = fImpl->session->State();
   const auto& request = state.request;
+  fImpl->layer->RemoveEntries(0, 1000000);
+  int layerIndex = 0;
+  TIter nextLayer(fImpl->session->Pad()->GetListOfPrimitives());
+  while(auto* object = nextLayer()) {
+    auto* histogram = dynamic_cast<TH1*>(object);
+    if(!histogram || histogram->GetDimension() != 1 || std::string(histogram->GetName()).find("PhotoPeakBackground_") == 0) continue;
+    ++layerIndex;
+    fImpl->layer->AddEntry(TString::Format("%d: %s", layerIndex, histogram->GetName()), layerIndex);
+    if(histogram == fImpl->session->Histogram()) fImpl->layer->Select(layerIndex, false);
+  }
+  auto* previous = fImpl->previous;
+  fImpl->copyButton->SetEnabled(previous && !previous->IsClosed());
+  fImpl->undoButton->SetEnabled(fImpl->session->CanUndoCopy());
+  fImpl->copySource->SetText(previous && !previous->IsClosed() ?
+    TString::Format("Copy source: %s / %s / %s", previous->Canvas()->GetName(), previous->Pad()->GetName(), previous->Histogram()->GetName()).Data() : "Copy source: none");
   fImpl->status->SetText(state.status.c_str());
   fImpl->target->SetText(TString::Format("Target: %s | Canvas: %s / %s | Rebin: x%d",
     fImpl->session->Histogram()->GetName(), fImpl->session->Canvas()->GetName(),
@@ -626,4 +715,59 @@ void PhotoPeakControlWindow::Hide() {
 void PhotoPeakControlWindow::DetachSession() {
   fImpl->session = nullptr;
   Hide();
+}
+
+// ============== PhotoPeakControlWindow::Bind ==============
+// Purpose: Preserve raw editor drafts separately for each target, including invalid text.
+// Inputs: New session. Outputs: Restored controls without implicit fitting or validation.
+void PhotoPeakControlWindow::Bind(PhotoPeakSession* session) {
+  if(fImpl->session == session) return;
+  if(fImpl->session && !fImpl->session->IsClosed()) {
+    Impl::Draft draft;
+    draft.dirty = fImpl->dirty;
+    draft.tab = fImpl->activeTab;
+    draft.peak = fImpl->editedPeak;
+    draft.backgroundOptions = BackgroundOptionsFromMenu(fImpl->backgroundOptionMenu.get());
+    std::function<void(TGCompositeFrame*)> visit = [&](TGCompositeFrame* parent) {
+      TIter next(parent->GetList());
+      while(auto* object = next()) {
+        auto* element = dynamic_cast<TGFrameElement*>(object);
+        if(!element) continue;
+        auto* frame = element->fFrame;
+        if(auto* combo = dynamic_cast<TGComboBox*>(frame)) {
+          if(combo != fImpl->layer) draft.combos.emplace_back(combo, combo->GetSelected());
+          continue;
+        }
+        if(auto* text = dynamic_cast<TGTextEntry*>(frame)) draft.texts.emplace_back(text, text->GetText());
+        if(auto* check = dynamic_cast<TGCheckButton*>(frame)) draft.checks.emplace_back(check,
+          check->IsOn() || check->IsDisabledAndSelected());
+        if(auto* container = dynamic_cast<TGCompositeFrame*>(frame)) visit(container);
+      }
+    };
+    visit(this);
+    fImpl->drafts[fImpl->session] = std::move(draft);
+  }
+  if(fImpl->session) fImpl->previous = fImpl->session;
+  fImpl->session = session;
+  if(!session) return;
+  fImpl->dirty = false;
+  fImpl->editedPeak = 0;
+  Refresh(true);
+  const auto found = fImpl->drafts.find(session);
+  if(found != fImpl->drafts.end()) {
+    const auto& draft = found->second;
+    fImpl->refreshing = true;
+    fImpl->activeTab = draft.tab;
+    fImpl->tabs->SetTab(draft.tab, false);
+    if(draft.dirty) {
+      for(const auto& entry : draft.texts) entry.first->SetText(entry.second.c_str(), false);
+      for(const auto& entry : draft.combos) entry.first->Select(entry.second, false);
+      for(const auto& entry : draft.checks) entry.first->SetState(entry.second ? kButtonDown : kButtonUp, false);
+      SetBackgroundOptions(fImpl->backgroundOptionMenu.get(), draft.backgroundOptions);
+      fImpl->editedPeak = draft.peak;
+      fImpl->dirty = true;
+    }
+    fImpl->refreshing = false;
+    Refresh();
+  }
 }

@@ -65,11 +65,26 @@ The data file above is a local test fixture and is not distributed with the
 repository. Any directly drawn one-dimensional TH1 can be used instead.
 For divided canvases, draw in the desired subpad and pass that pad to `Start`.
 
-`PhotoPeakFit::Start()` uses the current pad and its selected or sole drawn
-one-dimensional histogram. If multiple histograms are drawn, click the target
-first or pass it explicitly. A pad and a target histogram can each belong to
-only one active fit session. Starting the same session again raises its window;
-switching its target requires stopping that session first. Failed API calls
+`PhotoPeakFit::Start()` opens one shared control window. Left-click another pad
+in the attached canvas to activate it; that first click only switches targets.
+Hovering and right-clicking do not switch the active pad. A red outline identifies
+the active pad, and keyboard shortcuts follow that target. **Fit layer** selects
+a directly drawn 1D histogram when several share a pad. Returning to a pad restores
+its last selected layer. Each pad/layer keeps its own settings, peak list, results,
+and unfinished editor text, including invalid input. Native ROOT interactions
+remain available.
+
+**Overwrite from previous target** copies the previous target's complete fitting
+configuration and editor draft onto the selected layer, replacing its prior
+PhotoPeakFit settings and clearing its fit results. The source, histogram data,
+other layers, and native drawings remain unchanged. The source is named above the
+button. **Undo overwrite** restores that layer's previous state and fit drawings.
+Copied settings outside the target's range remain visible and must be corrected
+before fitting; they are never silently clipped. Overwrite does not run a fit.
+New layers start from default settings and their own visible range. Rebinning,
+source-snapshot refresh, and Clean discard the pending overwrite undo. State is
+kept for the live ROOT session; it is not saved across ROOT restarts. A histogram
+cannot simultaneously own fitting sessions in different pads. Failed API calls
 return `false`; `PhotoPeakFit::LastError()` explains the failure.
 
 ## Control panel
@@ -111,7 +126,8 @@ preserving ROOT interaction.
 
 | Interaction | Action |
 |---|---|
-| Left click in the plot | Add a peak, or select an existing nearby peak |
+| Left click in another pad | Activate its last fit layer without adding a peak |
+| Left click in the active plot | Add a peak, or select an existing nearby peak |
 | Drag a peak marker | Move its centroid; clicking it again does not delete it |
 | Shift-left click | Set successive fit-range bounds |
 | Shift+E over the canvas | Open ROOT's native X-axis SetRangeUser dialog for this target |

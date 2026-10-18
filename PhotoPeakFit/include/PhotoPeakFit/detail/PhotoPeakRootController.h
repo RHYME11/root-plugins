@@ -6,6 +6,7 @@
 #include <GuiTypes.h>
 
 class TH1;
+class PhotoPeakSession;
 class TVirtualPad;
 
 class PhotoPeakRootController : public TObject {
@@ -13,6 +14,10 @@ public:
   static PhotoPeakRootController& Instance();
   ~PhotoPeakRootController() override;
   bool Start(TH1* histogram, TVirtualPad* pad);
+  PhotoPeakSession* ActiveSession() const;
+  void ParkEditor(PhotoPeakSession* session);
+  bool SelectLayer(int index);
+  bool CopyPrevious();
   bool Clean(TVirtualPad* pad);
   bool RefreshSnapshot(TH1* target, const TH1* snapshot, TVirtualPad* pad);
   bool InvalidateSource(TVirtualPad* pad, const char* message);
@@ -28,6 +33,7 @@ public:
   ClassDefOverride(PhotoPeakRootController, 0)
 
 private:
+  void Activate(PhotoPeakSession* session);
   PhotoPeakRootController();
   class Impl;
   std::unique_ptr<Impl> fImpl; //! Transient runtime state.

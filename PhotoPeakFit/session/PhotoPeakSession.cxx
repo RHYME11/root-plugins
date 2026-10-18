@@ -11,11 +11,13 @@
 #include <TDirectory.h>
 #include <TH1.h>
 #include <TList.h>
+#include <TString.h>
 #include <TROOT.h>
 #include <TVirtualFitter.h>
 #include <TVirtualPad.h>
 
 #include <PhotoPeakFit/PhotoPeakControlWindow.h>
+#include <PhotoPeakFit/detail/PhotoPeakRootController.h>
 #include <PhotoPeakFit/PhotoPeakFitter.h>
 
 #include "PhotoPeakDrawController.h"
@@ -45,8 +47,9 @@ void ReleaseSessionFitter(TH1* histogram) {
 // Purpose: Create one PhotoPeak application-overlay session for a pad.
 // Inputs: Owner canvas, event pad, and target histogram.
 // Outputs: Initialized session and non-modal control window.
-PhotoPeakSession::PhotoPeakSession(TCanvas* canvas, TVirtualPad* pad, TH1* histogram)
-  : fCanvas(canvas),
+PhotoPeakSession::PhotoPeakSession(TCanvas* canvas, TVirtualPad* pad, TH1* histogram, bool createWindow)
+  : fManaged(!createWindow),
+    fCanvas(canvas),
     fPad(pad),
     fHistogram(histogram) {
   fMarkers = std::make_unique<PhotoPeakMarkerController>(fPad, fHistogram);
@@ -71,7 +74,7 @@ PhotoPeakSession::PhotoPeakSession(TCanvas* canvas, TVirtualPad* pad, TH1* histo
     fState.request.config.global[kPhotoPeakStep] = {
       0.25, PhotoPeakParameterMode::Limited, 0.0, 100.0};
   }
-  if(!gROOT->IsBatch()) {
+  if(createWindow && !gROOT->IsBatch()) {
     fWindow = std::make_unique<PhotoPeakControlWindow>(this);
     fWindow->Show();
   }
@@ -211,6 +214,7 @@ void PhotoPeakSession::DetachTarget() {
 void PhotoPeakSession::Abandon() {
   if(fState.closed)
     return;
+  PhotoPeakRootController::Instance().ParkEditor(this);
   fState.closed = true;
   ReleaseSessionFitter(fHistogram);
   if(IsPhotoPeakPadAlive(fCanvas, fPad)) {
@@ -226,6 +230,8 @@ void PhotoPeakSession::Abandon() {
     window->DetachSession();
     window->DeleteWindow();
   }
+  fCopyUndo.reset();
+  fUndoObjects.clear();
   fOriginalHistogram.reset();
   fMarkers.reset();
   fDrawing.reset();
@@ -382,6 +388,8 @@ void PhotoPeakSession::CancelDrag() {
 void PhotoPeakSession::Clean() {
   if(!ValidateTarget() || fState.fitting)
     return;
+  fCopyUndo.reset();
+  fUndoObjects.clear();
   TVirtualPad::TContext context(fPad);
   Changed();
   if(fMarkers)
@@ -570,6 +578,7 @@ void PhotoPeakSession::SetInteraction(PhotoPeakInteraction mode) {
 // Purpose: Draw committed selection state in the owning pad.
 // Inputs: Current state. Outputs: Updated markers.
 void PhotoPeakSession::RefreshMarkers() {
+  if(fManaged && PhotoPeakRootController::Instance().ActiveSession() != this) return;
   TVirtualPad::TContext context(fPad);
   if(fMarkers)
     fMarkers->Refresh(fState);
@@ -590,6 +599,8 @@ void PhotoPeakSession::Rebin(bool undo) {
   if(!ValidateTarget() || !CommitPending() || !fOriginalHistogram ||
      (undo && fState.rebinFactor <= 1) || (!undo && fHistogram->GetNbinsX() < 2))
     return;
+  fCopyUndo.reset();
+  fUndoObjects.clear();
   const auto* axis = fHistogram->GetXaxis();
   const double low = axis->GetBinLowEdge(axis->GetFirst());
   const double high = axis->GetBinUpEdge(axis->GetLast());
@@ -671,6 +682,8 @@ void PhotoPeakSession::InvalidateSource(const std::string& message) {
 // Inputs: Same-type one-dimensional spectrum. Outputs: Updated owned baseline, stale previous fit, and refreshed view.
 bool PhotoPeakSession::RefreshSnapshot(const TH1& snapshot) {
   if(!ValidateTarget() || fState.fitting || snapshot.GetDimension() != 1 || snapshot.IsA() != fHistogram->IsA() || !CommitPending()) return false;
+  fCopyUndo.reset();
+  fUndoObjects.clear();
   TVirtualPad::TContext context(fPad);
   TDirectory::TContext directory(nullptr);
   CancelDrag(); Changed(); fMarkers->Clear(); RemovePhotoPeakBackground(fPad, fHistogram);
@@ -721,4 +734,80 @@ void PhotoPeakSession::ShowBackground() {
   fPad->Modified();
   fPad->Update();
   SetStatus("Background updated (green dashed line). Fit subtracts it; displayed curves include it.");
+}
+
+// ============== PhotoPeakSession::TakeWindow ==============
+// Purpose: Transfer the shared panel. Inputs: None. Outputs: Owned panel.
+std::unique_ptr<PhotoPeakControlWindow> PhotoPeakSession::TakeWindow() {
+  CancelDrag();
+  if(fMarkers) fMarkers->Clear();
+  return std::move(fWindow);
+}
+
+// ============== PhotoPeakSession::AdoptWindow ==============
+// Purpose: Attach the shared panel. Inputs: Panel. Outputs: Restored target editor.
+void PhotoPeakSession::AdoptWindow(std::unique_ptr<PhotoPeakControlWindow> window) {
+  fWindow = std::move(window);
+  if(fWindow) { fWindow->Bind(this); fWindow->Show(); }
+  RefreshMarkers();
+}
+
+// ============== PhotoPeakSession::CopySettings ==============
+// Purpose: Replace only this layer's settings, retaining an undo snapshot.
+// Inputs: Source session. Outputs: Unfitted target with copied settings.
+bool PhotoPeakSession::CopySettings(const PhotoPeakSession& source) {
+  if(!ValidateTarget() || fState.fitting || source.IsClosed()) return false;
+  fCopyUndo = std::make_unique<PhotoPeakSessionState>(fState);
+  fUndoObjects.clear();
+  const std::string fitPrefix = TString::Format("PhotoPeak_%p_", static_cast<void*>(fHistogram)).Data();
+  const std::string backgroundPrefix = TString::Format("PhotoPeakBackground_%p_", static_cast<void*>(fHistogram)).Data();
+  TIter next(fPad->GetListOfPrimitives());
+  std::vector<TObject*> drawings;
+  while(auto* object = next()) {
+    const std::string name = object->GetName();
+    if(name.find(fitPrefix) == 0 || name.find(backgroundPrefix) == 0) drawings.push_back(object);
+  }
+  for(auto* object : drawings) {
+    fPad->GetListOfPrimitives()->Remove(object);
+    fUndoObjects.emplace_back(object);
+  }
+  if(fDrawing) fDrawing->CleanFitObjects();
+  RemovePhotoPeakBackground(fPad, fHistogram);
+  fState.request = source.State().request;
+  fState.interaction = source.State().interaction;
+  fState.rangeVisible = source.State().rangeVisible;
+  fState.selectedPeak = source.State().selectedPeak;
+  fState.hasResult = false;
+  fState.result = PhotoPeakFitResult{};
+  fState.fittedRequest = PhotoPeakFitRequest{};
+  fNextPeakId = 1;
+  for(const auto& peak : fState.request.peaks) fNextPeakId = std::max(fNextPeakId, peak.id + 1);
+  Changed();
+  CancelDrag();
+  fState.status = "Settings copied; not fitted. Undo overwrite is available.";
+  if(fWindow) fWindow->Refresh(true);
+  RefreshMarkers();
+  ValidateRequest(fState.request);
+  return true;
+}
+
+// ============== PhotoPeakSession::UndoCopy ==============
+// Purpose: Restore the overwritten request and result. Inputs: None. Outputs: Previous state.
+bool PhotoPeakSession::UndoCopy() {
+  if(!ValidateTarget() || fState.fitting || !fCopyUndo) return false;
+  if(fDrawing) fDrawing->CleanFitObjects();
+  RemovePhotoPeakBackground(fPad, fHistogram);
+  const bool sourceOutOfDate = fState.sourceOutOfDate;
+  const auto sourceMessage = fState.sourceMessage;
+  fState = *fCopyUndo;
+  fState.sourceOutOfDate = sourceOutOfDate;
+  fState.sourceMessage = sourceMessage;
+  for(auto& object : fUndoObjects) fPad->GetListOfPrimitives()->Add(object.release());
+  fUndoObjects.clear();
+  fCopyUndo.reset();
+  fNextPeakId = 1;
+  for(const auto& peak : fState.request.peaks) fNextPeakId = std::max(fNextPeakId, peak.id + 1);
+  if(fWindow) fWindow->Refresh(true);
+  RefreshMarkers();
+  return true;
 }

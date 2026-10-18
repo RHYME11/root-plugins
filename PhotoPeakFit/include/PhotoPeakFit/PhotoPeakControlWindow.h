@@ -17,6 +17,7 @@ class PhotoPeakControlWindow : public TGMainFrame {
     void CloseWindow() override;
     void Refresh(bool discardEdits = false);
     bool CommitEdits();
+    void Bind(PhotoPeakSession* session);
     void Show();
     void Hide();
     void DetachSession();
