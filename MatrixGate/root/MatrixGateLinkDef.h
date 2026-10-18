@@ -9,6 +9,8 @@
 #pragma link C++ enum MatrixGate::BackgroundTemplate;
 #pragma link C++ enum MatrixGate::FractionMethod;
 #pragma link C++ enum MatrixGate::ErrorPolicy;
+#pragma link C++ enum MatrixGate::FractionIntegral;
+#pragma link C++ enum MatrixGate::ManualOverlap;
 #pragma link C++ class MatrixGate::Gate+;
 #pragma link C++ class std::vector<MatrixGate::Gate>+;
 #pragma link C++ class MatrixGate::FlowPolicy+;
@@ -16,6 +18,8 @@
 #pragma link C++ class MatrixGate::Config+;
 #pragma link C++ class MatrixGate::GateBins+;
 #pragma link C++ class std::vector<MatrixGate::GateBins>+;
+#pragma link C++ class MatrixGate::SubtractionComponent+;
+#pragma link C++ class std::vector<MatrixGate::SubtractionComponent>+;
 #pragma link C++ class MatrixGate::Projection-;
 #pragma link C++ class MatrixGate::Result-;
 #pragma link C++ function MatrixGate::Compute;

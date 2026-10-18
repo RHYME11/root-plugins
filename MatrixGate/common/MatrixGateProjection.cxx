@@ -1,4 +1,5 @@
 #include "MatrixGateProjection.h"
+#include "MatrixGateBackground.h"
 
 #include <algorithm>
 #include <atomic>
@@ -11,9 +12,9 @@
 #include <TDirectory.h>
 #include <TH2.h>
 
-namespace {
+namespace MatrixGate::Detail {
 
-std::atomic<std::uint64_t> gCalculationId{0};
+static std::atomic<std::uint64_t> gCalculationId{0};
 
 // ============== ReadEdges ==============
 // Purpose: Read physical bin edges without relying on rounded coordinate-to-bin arithmetic.
@@ -47,13 +48,7 @@ void ValidateConfig(const MatrixGate::Config& config) {
   if(config.combination != Combination::Separate && config.combination != Combination::Sum &&
      config.combination != Combination::Union)
     throw std::invalid_argument("Gate combination must be Separate, Sum, or Union.");
-  if(config.background.model != SubtractionModel::None ||
-     config.background.selection != BackgroundTemplate::None || !config.background.gates.empty() ||
-     config.background.fraction != 0.0 || config.background.relativeUncertainty != 0.0 ||
-     config.background.fractionMethod != FractionMethod::TSpectrum)
-    throw std::invalid_argument("Background subtraction is not implemented in this projection stage.");
-  if(config.errors != ErrorPolicy::FixedCoefficients)
-    throw std::invalid_argument("This stage supports only fixed-coefficient statistical errors.");
+  ValidateBackgroundConfig(config);
   std::set<std::uint64_t> ids;
   for(const auto& gate : config.gates) {
     if(!gate.id || !ids.insert(gate.id).second)
@@ -120,10 +115,10 @@ void AddGate(MatrixGate::Projection& projection, const MatrixGate::GateBins& gat
   projection.gates.push_back(gate);
 }
 
-// ============== ComputeProjection ==============
+// ============== ComputeUnchecked ==============
 // Purpose: Produce validated total and gated spectra from source-bin weights.
 // Inputs: Matrix and configuration. Outputs: Complete result or an exception.
-MatrixGate::Result ComputeProjection(const TH2& matrix, const MatrixGate::Config& config) {
+MatrixGate::Result ComputeUnchecked(const TH2& matrix, const MatrixGate::Config& config) {
   using namespace MatrixGate;
   ValidateConfig(config);
   if(matrix.GetDimension() != 2 || matrix.InheritsFrom("TH2Poly"))
@@ -208,22 +203,19 @@ MatrixGate::Result ComputeProjection(const TH2& matrix, const MatrixGate::Config
       raw.SetBinError(bin, std::sqrt(rawVariance[item][bin]));
     raw.ResetStats();
   }
+  ApplyBackground(matrix, output);
   output.success = true;
   output.message = output.projections.empty() ? "Total projection ready; no enabled signal gates." :
-    "Total and raw gated projections ready; background subtraction is disabled.";
+    "Total, raw gated, subtracted-background, and net spectra ready.";
   return output;
 }
-
-} // namespace
-
-namespace MatrixGate::Detail {
 
 // ============== ComputeProjection ==============
 // Purpose: Return an atomic failure without exposing partial spectra.
 // Inputs: Matrix and configuration. Outputs: Complete result or diagnostic.
 Result ComputeProjection(const TH2& matrix, const Config& config) {
   try {
-    return ::ComputeProjection(matrix, config);
+    return ComputeUnchecked(matrix, config);
   } catch(const std::exception& error) {
     Result result;
     result.config = config;

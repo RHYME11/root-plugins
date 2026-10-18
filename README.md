@@ -4,8 +4,8 @@ Optional plugins for CERN ROOT. Each plugin is an independent top-level unit.
 PhotoPeakFit runs directly in native ROOT with an English, non-modal fitting
 control panel linked to the existing histogram canvas.
 MatrixGate provides read-only TH2 projections through a separate ROOT library.
-Its first stage supports X/Y gates, Separate/Sum/Union, and statistical errors;
-background subtraction, the control window, and fitting integration are later stages.
+It supports X/Y gates, Separate/Sum/Union, template subtraction, and the RadWare
+standard 2D background model. The control window and fitting integration are later stages.
 
 ## Build
 
@@ -294,15 +294,171 @@ even after the input file closes. Keep the move-only `Result` alive while using
 its spectra; destroy it or move it to transfer ownership. A failure returns
 `success=false`, a diagnostic in `message`, and no partial spectra.
 
-Only `background.model=None`, `background.selection=None`, default background
-settings, and `errors=FixedCoefficients` are implemented in this stage. Other
-declared background models and error policies are reserved and rejected. There
-is no MatrixGate session/control window yet; drawing the returned spectra uses
-ordinary ROOT canvases. MatrixGate does not link to PhotoPeakFit or GRSISort.
+Every projection also owns `subtracted` and `net` spectra, statistical-variance
+and scale-uncertainty components. With `background.model=None`, `subtracted` is
+zero and `net` equals `raw`. MatrixGate currently uses ordinary ROOT canvases;
+its session/control window and optional PhotoPeakFit connector are later stages.
+It does not link to PhotoPeakFit or GRSISort.
+
+### Template background subtraction
+
+`SubtractionModel::Template` uses `R = S - alpha H`, with separate settings for
+the template H and the background fraction f. Except for Width normalization,
+`alpha = f * integral(S) / integral(H)`. Both integrals use the same output-axis
+domain, defaulting to normal bins. A custom domain uses
+`useNormalizationRange=true`, `normalizationLow`, and `normalizationHigh`;
+`Projection::normalizationFirst/Last` records the actual bins. Empty template
+selections and nonpositive template integrals fail explicitly.
+
+For example, following the small matrix above:
+
+```cpp
+MatrixGate::Config subtract;
+subtract.gates = {{1, "Signal", 1, 2, true}};
+subtract.background.model = MatrixGate::SubtractionModel::Template;
+subtract.background.selection = MatrixGate::BackgroundTemplate::Anti;
+subtract.background.fractionMethod = MatrixGate::FractionMethod::Manual;
+subtract.background.fraction = 0.25;
+auto sub = MatrixGate::Compute(matrix, subtract);
+std::cout << sub.Report();
+// After checking sub.success:
+sub.projections[0].net->Draw("hist");
+```
+
+| Template | Source bins |
+|---|---|
+| `None` | Disable subtraction |
+| `Full` | All enabled gate-axis bins, including the signal |
+| `Anti` | Full with the selected signal bins removed |
+| `Compton` | Starts two bins above the upper signal bin by default; a successful local fit uses centroid + 3 sigma |
+| `Manual` | Union of enabled `background.gates`, using absolute coordinates |
+| `ManualRelative` | Background coordinates are offsets from the midpoint of the requested signal interval; Union uses its enclosing interval |
+
+Selecting `None` keeps stored inactive template settings and returns the raw
+spectrum as the net spectrum.
+
+`comptonGapBins` changes the default Compton gap (1 means one skipped bin).
+All templates obey the explicit flow policy; unlike jROOT's Compton path,
+MatrixGate does not force overflow inclusion. Estimated-fraction and Width
+modes require finite normal gate bins. Compton selections with no available
+bins fail instead of moving the template back into the signal gate.
+
+Manual windows have their own unique nonzero IDs. `manualOverlap=Reference`
+removes signal bins strictly enclosed by an individual background window and
+retains partial overlaps, following the reference single-gate rule. Choose
+`ExcludeSignal` to remove every overlap or `Allow` to retain all overlaps.
+Background windows form a union after their masks are constructed. Anti and
+Manual gaps are built by explicit source-bin masks, preserving weighted errors
+in both side segments rather than subtracting histogram errors or constructing
+reversed intervals.
+
+| Fraction method | Calculation |
+|---|---|
+| `Manual` | User-supplied `fraction` in [0,1]; this is f, not alpha |
+| `TSpectrum` | Estimated background under the signal divided by gated total-projection counts |
+| `LinearFixed` | Gaussian plus an endpoint-derived fixed linear baseline |
+| `PolynomialFlex` | Gaussian plus a fitted quadratic baseline |
+| `Width` | Direct `alpha = signal physical width / template physical width` |
+
+TSpectrum settings are `spectrumIterations` (default 25) and `spectrumOptions`,
+for example `"BackOrder4 nosmoothing"`. The 25-, 10-, and 30-iteration/order-4
+reference settings can be selected explicitly. At least `2 * iterations + 1`
+normal bins and nonnegative total-projection counts are required. Options are
+validated; drawing options such as `same` are rejected. TSpectrum works in bin
+index space, including for variable-width axes.
+
+An existing background curve can instead be supplied as
+`projectionBackground`, a vector of exactly N normal-bin **counts** on the gate
+axis. In Template mode select the TSpectrum fraction method to use this imported
+curve instead of estimating one. The resulting curve is retained independently
+in `Result::estimatedBackground` and treated as fixed.
+
+`fractionIntegral=Counts` is the default and sums bin counts without another
+width factor. `WidthWeighted` explicitly reproduces the width-weighted
+fraction-integral convention of the jROOT selector. These fractions agree on
+uniform grids but can differ on variable bins. The alpha normalization integrals
+remain sums of counts in either case. Width mode uses physical bin widths and
+does not use a fitted/manual fraction; its reported f is derived and may exceed
+one. If its signal integral is nonpositive, f is marked undefined while alpha
+and the negative net bins remain valid.
+
+Local fits use a separate ROOT::Fit::Fitter, preserving the global
+TVirtualFitter used by other tools. They fit exact Gaussian/polynomial bin
+integrals in Counts mode, or bin averages in WidthWeighted mode. Physical
+coordinates are shifted to the fit midpoint for numerical stability. By default
+the fit range extends two signal widths on each side; set `useFitRange`,
+`fitLow`, and `fitHigh` to override it. A single connected interval and enough
+nonzero-error bins are required. A disconnected Union must use Manual or
+TSpectrum, or be analyzed as Separate/Sum. Failed fits are reported, not replaced
+with another estimator. Estimated fractions are clipped to [0,1] as in the
+reference selector, with both the original value and clipping flag recorded.
+Local-fit initialization/minimization is independent code and does not promise
+bit-for-bit agreement with jROOT's automatic fit-range heuristics.
+
+For Sum, each signal gate gets its own template and alpha before the results
+are added. For Union, the merged signal selection is normalized once. Per-gate
+IDs, weights, alpha, f, selected background windows, and fit status are retained
+in `Projection::components`, including the fitted parameters, polynomial origin,
+chi-square, and NDF. `backgroundTemplate` is the unscaled sum of the
+component templates; `subtracted` is the actual weighted sum that was removed.
+
+### RadWare standard 2D background
+
+Select `background.model=SubtractionModel::RadWareStandard` and explicitly set
+`symmetricGammaGamma=true`. The matrix must be symmetric within the configured
+relative `symmetryTolerance`, with identical X/Y bin edges. The mode excludes
+flow bins and uses the whole normal matrix for normalization. Its background
+curve b comes from `projectionBackground` or TSpectrum, with finite nonnegative
+counts. Estimated b can exceed observed P in individual bins, including through
+TSpectrum smoothing. The curve is retained without clipping; the number of
+affected bins and maximum excess are recorded and reported. Negative estimated
+peak contributions are retained in the original formula. This mode is intended for symmetric gamma-gamma
+data, not a generic energy-time or particle-gamma matrix.
+
+With `P_i=sum_j M_ij` and `T=sum_i P_i`, it calculates
+`B_ij=(P_i b_j + b_i P_j - b_i b_j)/T`. For each signal selection G, the
+subtracted output is `C_j=(b_G/T)P_j + ((P_G-b_G)/T)b_j`. Both coefficients are
+reported as alpha and beta. This includes the second background term absent
+from Full template subtraction. E2-bump and valley corrections are not included.
+
+### Uncertainty conventions
+
+`errors=FixedCoefficients` is the default. Template net variances use the final
+combined cell coefficient `g_i - sum_k(alpha_k h_ki)`, squared before multiplying
+the source variance. This includes signal/template overlap and reuse of the
+same background or signal cells across Sum gates. The RadWare model follows
+the fixed-background convention, retaining the raw gate's statistical variance.
+
+| Error policy | Statistical convention | Automatic relative scale uncertainty |
+|---|---|---|
+| `FixedCoefficients` | Shared-cell covariance for templates; fixed background for RadWare | 0 |
+| `JRootCompatible` | Omit signal/template covariance; retain combined Sum weights | 8% for Manual fraction, 4% for estimated/Width modes |
+| `RadWareCompatible` | Raw statistical variance plus scale term, then a variance floor of 1 | 5% |
+
+The compatibility policies apply only to their respective models. Set
+`relativeUncertainty >= 0` to override a preset, including explicit zero; -1
+selects the preset. These percentages are empirical reference settings.
+
+The scale uncertainty is one common nuisance for the final subtraction:
+`systematicShift_j = relativeUncertainty * C_j`. Its cross-bin covariance is
+the outer product of that vector. `Projection::Covariance(i,j)` includes this
+term, the diagonal statistical variance, and any separately stored variance
+floor. The returned TH1 errors contain only the covariance diagonal. Additional
+uncertainty/correlation from data-derived f, fitted baselines, P, b, and T is
+not propagated: reported errors are explicitly conditional on those quantities.
+Different Separate spectra can still share cells and a scale nuisance; a joint
+covariance across different Projection objects is not currently returned.
+
+Reference baselines:
+[jROOT v4.1 selector](https://github.com/jsmallcombe/jRootAnalysisTools/blob/v4.1/src/j_gating_select_frame.cpp),
+[template subtraction](https://github.com/jsmallcombe/jRootAnalysisTools/blob/v4.1/src/j_gating_subtraction_frame.cpp),
+[SLICE](https://github.com/radforddc/rw05/blob/fc0b431e5d8146095c054b4a2babd491d4130448/src/slice.c),
+[RadWare background derivation](https://github.com/radforddc/rw05/blob/fc0b431e5d8146095c054b4a2babd491d4130448/doc/bgsub.tex),
+[ESCL8R error convention](https://github.com/radforddc/rw05/blob/fc0b431e5d8146095c054b4a2babd491d4130448/src/escl8ra.c).
 
 The calculation lives in `MatrixGate/common/`, the public types in
 `MatrixGate/include/MatrixGate/`, and the ROOT entry, dictionary, and loader in
-`MatrixGate/root/`. GUI, sessions, background calculations, export, and the
+`MatrixGate/root/`. GUI, sessions, export, and the
 optional PhotoPeakFit connector will build on these layers.
 
 ## Code structure
@@ -374,5 +530,10 @@ MatrixGate checks cover non-square matrices in both directions, overlapping
 Separate/Sum/Union gates, weighted and negative bins, variable edges, exact
 boundaries, flow policies, stable IDs, disabled gates, input/global-state
 preservation, independent snapshots, file closure, invalid requests, and explicit
-rejection of background modes not yet implemented. Its loader smoke test calls
+rejection of invalid background settings. Its loader smoke test calls
 the public API through Cling and checks shared-bin statistical propagation.
+The background tests check Full/Anti/Compton/Manual/Relative masks, weighted
+sideband gaps, conditional covariance and scale presets, variable-bin width and
+fraction conventions, per-gate Sum normalization, TSpectrum's direct array API,
+known Gaussian/linear/quadratic baselines, the explicitly summed RadWare 2D
+formula, variance floors, negative net bins, and source preservation.

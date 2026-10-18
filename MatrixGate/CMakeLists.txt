@@ -1,15 +1,16 @@
 cmake_minimum_required(VERSION 3.13)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  project(MatrixGate VERSION 0.1.0 LANGUAGES CXX)
+  project(MatrixGate VERSION 0.2.0 LANGUAGES CXX)
 endif()
 
-find_package(ROOT REQUIRED COMPONENTS Core RIO Hist)
+find_package(ROOT REQUIRED COMPONENTS Core RIO Hist Matrix MathCore Spectrum Minuit2)
 include(GNUInstallDirs)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
 
 add_library(MatrixGate SHARED
   common/MatrixGateConfig.cxx
+  common/MatrixGateBackground.cxx
   common/MatrixGateProjection.cxx
   common/MatrixGateResult.cxx
   root/MatrixGateRoot.cxx
@@ -20,7 +21,8 @@ target_include_directories(MatrixGate PUBLIC
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   PRIVATE common
 )
-target_link_libraries(MatrixGate PUBLIC ROOT::Core ROOT::RIO ROOT::Hist)
+target_link_libraries(MatrixGate PUBLIC ROOT::Core ROOT::RIO ROOT::Hist
+  ROOT::Matrix ROOT::MathCore ROOT::Spectrum ROOT::Minuit2)
 set_target_properties(MatrixGate PROPERTIES
   CXX_EXTENSIONS OFF
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
