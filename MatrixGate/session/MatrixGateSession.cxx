@@ -12,6 +12,7 @@
 #include <Buttons.h>
 #include <KeySymbols.h>
 #include <TCanvas.h>
+#include <TColor.h>
 #include <TDirectory.h>
 #include <TFrame.h>
 #include <TH2.h>
@@ -97,6 +98,10 @@ Session::Session(TH2* source, Config config, Result initial, bool openWindow)
   for(const auto* gates : {&fConfig.gates, &fConfig.background.gates})
     for(const auto& gate : *gates) fNextId = std::max(fNextId, gate.id + 1);
   if(!fConfig.gates.empty()) fSelectedId = fConfig.gates.front().id;
+  for(int index = 0; index < 2; ++index) {
+    const auto* axis = index == 0 ? source->GetXaxis() : source->GetYaxis();
+    fViews[index] = {axis->GetXmin(), axis->GetXmax()};
+  }
   fStatus = "Ready. Pick two edges or double-click a center on the total projection.";
   if(openWindow) {
     fWindow = std::make_unique<Window>(this);
@@ -151,19 +156,118 @@ std::vector<double> Session::GateEdges() const {
 double Session::Anchor() const {
   double low = std::numeric_limits<double>::infinity();
   double high = -low;
-  std::uint64_t shown = 0;
-  if(fResultIndex < fResult.projections.size() && !fResult.projections[fResultIndex].gates.empty())
-    shown = fResult.projections[fResultIndex].gates.front().requested.id;
+  std::size_t index = 0;
   for(const auto& gate : fConfig.gates) {
     if(!gate.enabled) continue;
-    if(fConfig.combination == Combination::Separate && gate.id == shown)
+    if(fConfig.combination == Combination::Separate && index++ == fResultIndex)
       return (gate.low + gate.high) / 2.0;
     low = std::min(low, gate.low);
     high = std::max(high, gate.high);
   }
   if(std::isfinite(low) && std::isfinite(high)) return (low + high) / 2.0;
+  const auto range = VisibleRange();
+  return (range.first + range.second) / 2.0;
+}
+
+// ============== VisibleRange ==============
+// Purpose: Read the remembered physical zoom. Inputs: None. Outputs: Visible low/high edges.
+std::pair<double, double> Session::VisibleRange() const {
+  return fViews[fConfig.gateAxis == Axis::X ? 0 : 1];
+}
+
+// ============== Anchors ==============
+// Purpose: Locate every physical instance of relative windows. Inputs: Config. Outputs: Signal centers.
+std::vector<double> Session::Anchors(const Config& config) const {
+  std::vector<double> centers;
+  double low = std::numeric_limits<double>::infinity();
+  double high = -low;
+  for(const auto& gate : config.gates) if(gate.enabled) {
+    centers.push_back((gate.low + gate.high) / 2.0);
+    low = std::min(low, gate.low); high = std::max(high, gate.high);
+  }
+  if(config.combination == Combination::Union && !centers.empty()) centers = {(low + high) / 2.0};
+  if(centers.empty()) {
+    const auto range = VisibleRange();
+    centers = {(range.first + range.second) / 2.0};
+  }
+  return centers;
+}
+
+// ============== GateLimits ==============
+// Purpose: Bound absolute or relative edits by all physical gate instances. Inputs: Gate kind. Outputs: Allowed coordinates.
+std::pair<double, double> Session::GateLimits(bool background) const {
+  auto range = VisibleRange();
+  if(background && fConfig.background.selection == BackgroundTemplate::ManualRelative) {
+    const auto centers = Anchors(fConfig);
+    range.first -= *std::min_element(centers.begin(), centers.end());
+    range.second -= *std::max_element(centers.begin(), centers.end());
+  }
+  return range;
+}
+
+// ============== ConstrainGates ==============
+// Purpose: Preserve visible gates and proportionally remap only out-of-view gates.
+// Inputs: Mutable config and old/new zoom. Outputs: Every physical gate remains visible.
+void Session::ConstrainGates(Config& config, std::pair<double, double> oldRange,
+  std::pair<double, double> newRange) const {
+  auto oldCenters = Anchors(config);
+  const bool hasSignal = std::any_of(config.gates.begin(), config.gates.end(), [](const Gate& gate) { return gate.enabled; });
+  if(!hasSignal) oldCenters = {(oldRange.first + oldRange.second) / 2.0};
+  auto constrain = [](Gate& gate, std::pair<double, double> from, std::pair<double, double> to) {
+    if(gate.low >= to.first && gate.high <= to.second) return;
+    const double scale = (to.second - to.first) / (from.second - from.first);
+    double low = to.first + (gate.low - from.first) * scale;
+    double high = to.first + (gate.high - from.first) * scale;
+    const double width = std::min(high - low, to.second - to.first);
+    low = std::clamp(low, to.first, to.second - width);
+    gate.low = low; gate.high = low + width;
+  };
+  for(auto& gate : config.gates) constrain(gate, oldRange, newRange);
+  if(config.background.selection == BackgroundTemplate::ManualRelative) {
+    auto centers = Anchors(config);
+    if(!hasSignal) centers = {(newRange.first + newRange.second) / 2.0};
+    oldRange.first -= *std::min_element(oldCenters.begin(), oldCenters.end());
+    oldRange.second -= *std::max_element(oldCenters.begin(), oldCenters.end());
+    newRange.first -= *std::min_element(centers.begin(), centers.end());
+    newRange.second -= *std::max_element(centers.begin(), centers.end());
+  }
+  for(auto& gate : config.background.gates) constrain(gate, oldRange, newRange);
+}
+
+// ============== SyncView ==============
+// Purpose: Observe native axis zoom after ROOT finishes processing it. Inputs: Display axis. Outputs: Synchronized gates/sliders.
+bool Session::SyncView(bool redraw) {
+  if(fClosed || fGesture || !fTotalDisplay || fResult.config.gateAxis != fConfig.gateAxis) return false;
+  const auto view = ReadView(fTotalDisplay.get());
   const auto edges = GateEdges();
-  return edges.empty() ? 0.0 : (edges.front() + edges.back()) / 2.0;
+  const std::pair<double, double> range{std::max(edges.front(), view.low), std::min(edges.back(), view.high)};
+  auto& previous = fViews[fConfig.gateAxis == Axis::X ? 0 : 1];
+  if(range == previous || range.first >= range.second) return false;
+  const auto old = fConfig;
+  ConstrainGates(fConfig, previous, range);
+  previous = range;
+  bool changed = false;
+  for(int kind = 0; kind < 2; ++kind) {
+    const auto& before = kind ? old.background.gates : old.gates;
+    const auto& after = kind ? fConfig.background.gates : fConfig.gates;
+    for(std::size_t i = 0; i < after.size(); ++i)
+      changed = changed || before[i].low != after[i].low || before[i].high != after[i].high;
+  }
+  fFirstBound = false;
+  if(changed) Changed();
+  if(redraw) {
+    Preview();
+    if(fWindow) fWindow->Refresh();
+  }
+  return true;
+}
+
+// ============== GateColor ==============
+// Purpose: Keep gate colors stable across deletions. Inputs: Stable ID. Outputs: ROOT color index.
+int Session::GateColor(std::uint64_t id) const {
+  static const int colors[] = {kBlue + 1, kGreen + 2, kMagenta + 1, kOrange + 7,
+    kCyan + 2, kRed + 1, kViolet + 1, kTeal + 3, kPink + 7, kAzure + 7, kSpring - 5, kOrange + 2};
+  return colors[(id ? id - 1 : 0) % (sizeof(colors) / sizeof(colors[0]))];
 }
 
 // ============== SetStatus ==============
@@ -200,10 +304,17 @@ bool Session::Configure(const Config& config) {
       std::set<std::uint64_t> ids;
       for(const auto& gate : *gates) {
         if(!gate.id || !ids.insert(gate.id).second) throw std::invalid_argument("Gate IDs must be unique and nonzero.");
-        if(!gate.enabled) continue;
         if(!std::isfinite(gate.low) || !std::isfinite(gate.high) || gate.low >= gate.high)
           throw std::invalid_argument("Gate bounds require finite Low < High.");
-        if(gates == &config.gates) ResolveGate(gate, edges, config.flow);
+        auto limits = VisibleRange();
+        if(gates == &config.background.gates && config.background.selection == BackgroundTemplate::ManualRelative) {
+          const auto centers = Anchors(config);
+          limits.first -= *std::min_element(centers.begin(), centers.end());
+          limits.second -= *std::max_element(centers.begin(), centers.end());
+        }
+        if(gate.low < limits.first - 1e-10 || gate.high > limits.second + 1e-10)
+          throw std::invalid_argument("Every gate must stay inside the visible zoom range (including relative instances).");
+        if(gates == &config.gates && gate.enabled) ResolveGate(gate, edges, config.flow);
       }
     }
     if(!std::isfinite(config.background.fraction) || config.background.fraction < 0 || config.background.fraction > 1)
@@ -221,6 +332,7 @@ bool Session::Configure(const Config& config) {
 // Purpose: Recompute atomically, retaining stale data on failure. Inputs: Live source/settings. Outputs: Calculation status.
 bool Session::Refresh(bool resetView) {
   if(fClosed || !fSource) return false;
+  if(!resetView) SyncView(false);
   fPending = false;
   auto result = Compute(*fSource, fConfig);
   if(!result.success) {
@@ -232,7 +344,12 @@ bool Session::Refresh(bool resetView) {
   }
   fResult = std::move(result);
   fCurrent = true;
-  SetStatus("Result matches the current settings. " + fResult.message);
+  bool zero = !fResult.projections.empty() && fConfig.background.model == SubtractionModel::Template &&
+    fConfig.background.selection != BackgroundTemplate::None;
+  for(const auto& projection : fResult.projections)
+    for(const auto& component : projection.components) zero = zero && component.alpha == 0.0;
+  SetStatus(zero ? "CURRENT: Background scale is zero; Scaled BG = 0, Net = Raw. Check Fraction / Manual f." :
+    "CURRENT: Result matches the current settings. " + fResult.message);
   Render(resetView);
   return true;
 }
@@ -243,6 +360,8 @@ bool Session::Refresh(bool resetView) {
 void Session::Tick() {
   if(fClosed) return;
   if(fWindow && (!Alive(TotalCanvas()) || !Alive(ResultCanvas()))) { Close(); return; }
+  if(fWindow) fWindow->CollectRows();
+  SyncView();
   if(fPending && !fGesture && static_cast<unsigned long long>(gSystem->Now()) >= fDue) {
     fPending = false;
     if(fWindow) fWindow->Submit(true);
@@ -281,13 +400,18 @@ void Session::AddGate(bool background, double center, bool explicitCenter) {
   if(fClosed) return;
   const auto edges = GateEdges();
   if(edges.size() < 2) return;
-  const double span = edges.back() - edges.front();
-  const double width = std::min(span, std::max(span / 20.0, edges[1] - edges[0]));
-  if(!explicitCenter) {
-    const auto view = ReadView(fTotalDisplay.get());
-    center = view.ranged ? (view.low + view.high) / 2.0 : (edges.front() + edges.back()) / 2.0;
+  SyncView();
+  if(background && fConfig.background.model == SubtractionModel::RadWareStandard) {
+    SetStatus("Manual BG gates require Model = Template subtraction."); return;
   }
-  center = std::clamp(center, edges.front() + width / 2.0, edges.back() - width / 2.0);
+  if(background && fConfig.background.selection != BackgroundTemplate::ManualRelative)
+    fConfig.background.selection = BackgroundTemplate::Manual;
+  const auto range = GateLimits(background);
+  const double span = range.second - range.first;
+  const double width = std::min(span, std::max(span / 20.0, edges[1] - edges[0]));
+  const double anchor = background && fConfig.background.selection == BackgroundTemplate::ManualRelative ? Anchor() : 0.0;
+  if(!explicitCenter) center = (range.first + range.second) / 2.0 + anchor;
+  center = std::clamp(center - anchor, range.first + width / 2.0, range.second - width / 2.0);
   auto used = [&](std::uint64_t id) {
     if(!id) return true;
     for(const auto* list : {&fConfig.gates, &fConfig.background.gates})
@@ -298,26 +422,43 @@ void Session::AddGate(bool background, double center, bool explicitCenter) {
   const auto id = fNextId++;
   double low = center - width / 2.0;
   double high = center + width / 2.0;
-  if(background && fConfig.background.selection == BackgroundTemplate::ManualRelative) {
-    low -= Anchor(); high -= Anchor();
-  }
+
   auto& gates = background ? fConfig.background.gates : fConfig.gates;
   gates.push_back({id, background ? "Background" : "Signal", low, high, true});
+  const auto visible = VisibleRange();
+  ConstrainGates(fConfig, visible, visible);
   Changed();
   Select(background, id);
   Render();
 }
 
 // ============== DeleteSelected ==============
-// Purpose: Remove one stable selection. Inputs: None. Outputs: Updated gate list and stale result.
+// Purpose: Purge one gate and its historical products. Inputs: None. Outputs: Recomputed or empty affected results.
 void Session::DeleteSelected() {
-  auto& gates = fSelectedBackground ? fConfig.background.gates : fConfig.gates;
-  const auto before = gates.size();
-  gates.erase(std::remove_if(gates.begin(), gates.end(), [&](const auto& gate) { return gate.id == fSelectedId; }), gates.end());
-  if(before == gates.size()) return;
+  const auto deleted = fSelectedId;
+  const bool background = fSelectedBackground;
+  auto erase = [&](Config& config) {
+    auto& list = background ? config.background.gates : config.gates;
+    list.erase(std::remove_if(list.begin(), list.end(), [&](const Gate& gate) { return gate.id == deleted; }), list.end());
+    if(background && list.empty() && (config.background.selection == BackgroundTemplate::Manual ||
+      config.background.selection == BackgroundTemplate::ManualRelative)) config.background.selection = BackgroundTemplate::None;
+  };
+  auto& gates = background ? fConfig.background.gates : fConfig.gates;
+  if(!SelectedGate()) return;
+  erase(fConfig);
+  const auto range = VisibleRange();
+  ConstrainGates(fConfig, range, range);
+  erase(fAxisConfigs[fConfig.gateAxis == Axis::X ? 0 : 1]);
+  if(fWindow) fWindow->ForgetGate(fConfig.gateAxis, background, deleted);
   fSelectedId = gates.empty() ? 0 : gates.front().id;
+  auto total = std::move(fResult.total);
+  fResult = Result{};
+  fResult.total = std::move(total);
+  fResult.config = fConfig;
+  fResultIndex = 0;
   Changed();
   if(fWindow) fWindow->Refresh(true);
+  Refresh();
   Render();
 }
 
@@ -326,10 +467,14 @@ void Session::DeleteSelected() {
 bool Session::SetBounds(double low, double high, bool preview) {
   auto* gate = SelectedGate();
   if(!gate || !std::isfinite(low) || !std::isfinite(high) || low >= high) return false;
-  const auto edges = GateEdges();
-  if(!fSelectedBackground && (low < edges.front() || high > edges.back())) return false;
+  const auto limits = GateLimits(fSelectedBackground);
+  if(low < limits.first || high > limits.second) {
+    SetStatus("Gate bounds must stay inside the visible zoom range."); return false;
+  }
   gate->low = low;
   gate->high = high;
+  const auto range = VisibleRange();
+  ConstrainGates(fConfig, range, range);
   Changed();
   if(fWindow) fWindow->Refresh(true);
   if(preview) Preview(); else Render();
@@ -402,11 +547,14 @@ void Session::ClearDrawings() {
 // Inputs: Optional view reset. Outputs: Updated result and gate canvases.
 void Session::Render(bool resetView) {
   if(fClosed || !Alive(TotalCanvas()) || !Alive(ResultCanvas())) return;
-  const auto rightView = resetView ? View{} : ReadView(fTotalDisplay.get());
+  if(!resetView) SyncView(false);
+  const auto range = VisibleRange();
+  const View rightView{true, range.first, range.second};
   View leftView;
   if(!resetView) for(const auto& display : fDisplays) if(display) { leftView = ReadView(display.get()); break; }
   ClearDrawings();
   TVirtualPad::TContext context(TotalCanvas());
+  if(!fResult.total) return;
   fTotalDisplay = Copy(*fResult.total);
   RestoreView(*fTotalDisplay, rightView);
   fTotalDisplay->SetTitle((std::string("Gate axis: ") + ToString(fResult.config.gateAxis) + " - Total projection").c_str());
@@ -496,13 +644,16 @@ void Session::DrawMarkers() {
     for(int edge = 0; edge < 2; ++edge) {
       Marker marker;
       marker.id = gate.id; marker.background = background; marker.upper = edge; marker.anchor = anchor;
+      if(background && fConfig.background.selection == BackgroundTemplate::ManualRelative && fConfig.combination == Combination::Sum)
+        for(const auto& signal : fConfig.gates)
+          if(signal.enabled && (signal.low + signal.high) / 2.0 == anchor) { marker.anchorId = signal.id; break; }
       const double x = (edge ? gate.high : gate.low) + anchor;
       marker.line = std::make_unique<TLine>(x, TotalCanvas()->PadtoY(TotalCanvas()->GetUymin()),
         x, TotalCanvas()->PadtoY(TotalCanvas()->GetUymax()));
       marker.line->SetVertical();
       marker.line->SetUniqueID(kGateMarker);
       marker.line->SetBit(TObject::kMustCleanup);
-      marker.line->SetLineColor(background ? kGreen + 2 : kBlue + 1);
+      marker.line->SetLineColor(GateColor(gate.id));
       marker.line->SetLineStyle(background ? 7 : 2);
       marker.line->SetLineWidth(gate.id == fSelectedId && background == fSelectedBackground ? 3 : 2);
       marker.line->Draw();
@@ -518,11 +669,19 @@ void Session::DrawMarkers() {
 // Purpose: Reposition existing boundaries safely during a native drag. Inputs: Settings. Outputs: Marker coordinates.
 void Session::Preview() {
   if(!Alive(TotalCanvas())) return;
+  TVirtualPad::TContext context(TotalCanvas());
   for(auto& marker : fMarkers) {
     const auto& gates = marker.background ? fConfig.background.gates : fConfig.gates;
+    if(marker.background && fConfig.background.selection == BackgroundTemplate::ManualRelative) {
+      marker.anchor = Anchor();
+      if(marker.anchorId) for(const auto& signal : fConfig.gates)
+        if(signal.id == marker.anchorId) marker.anchor = (signal.low + signal.high) / 2.0;
+    }
     for(const auto& gate : gates) if(gate.id == marker.id) {
       const double x = (marker.upper ? gate.high : gate.low) + marker.anchor;
       marker.line->SetX1(x); marker.line->SetX2(x);
+      marker.line->SetY1(TotalCanvas()->PadtoY(TotalCanvas()->GetUymin()));
+      marker.line->SetY2(TotalCanvas()->PadtoY(TotalCanvas()->GetUymax()));
       marker.line->SetLineWidth(gate.id == fSelectedId && marker.background == fSelectedBackground ? 3 : 2);
     }
   }
@@ -538,10 +697,11 @@ void Session::CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* s
     const int key = py ? py : px;
     if(key == kKey_Escape) { SetBrowse(true); return; }
     if(fBrowse) return;
-    if(key == kKey_Delete && (!fWindow || fWindow->Submit(false))) DeleteSelected();
+    if(key == kKey_Delete) DeleteSelected();
     if((key == kKey_Return || key == kKey_Enter) && fWindow) fWindow->Submit(true);
     return;
   }
+  if(!fGesture) SyncView();
   if(fBrowse || !fTotalDisplay) return;
   const int left = canvas->XtoAbsPixel(canvas->GetUxmin());
   const int right = canvas->XtoAbsPixel(canvas->GetUxmax());
@@ -559,7 +719,9 @@ void Session::CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* s
     else {
       const double offset = fSelectedBackground && fConfig.background.selection == BackgroundTemplate::ManualRelative ? Anchor() : 0.0;
       const double width = gate->high - gate->low;
-      SetBounds(x - offset - width / 2.0, x - offset + width / 2.0);
+      const auto limits = GateLimits(fSelectedBackground);
+      const double low = std::clamp(x - offset - width / 2.0, limits.first, limits.second - width);
+      SetBounds(low, low + width);
     }
     return;
   }
@@ -577,8 +739,8 @@ void Session::CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* s
     }
   } else if(event == kButton1Motion && fDragging >= 0) {
     auto& marker = fMarkers[fDragging];
-    const auto edges = GateEdges();
-    const double point = std::clamp(x, edges.front(), edges.back()) - marker.anchor;
+    const auto limits = GateLimits(marker.background);
+    const double point = std::clamp(x - marker.anchor, limits.first, limits.second);
     auto* gate = SelectedGate();
     if(!gate) return;
     double low = marker.upper ? gate->low : point;

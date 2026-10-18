@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 #include <MatrixGate/MatrixGateResult.h>
 
 class TH2;
@@ -46,6 +47,10 @@ public:
   const Gate* SelectedGate() const;
   double Anchor() const;
   std::vector<double> GateEdges() const;
+  std::pair<double, double> VisibleRange() const;
+  std::pair<double, double> GateLimits(bool background) const;
+  bool SyncView(bool redraw = true);
+  int GateColor(std::uint64_t id) const;
 
   // ============== Source ==============
   // Purpose: Read the borrowed source matrix. Inputs: None. Outputs: Borrowed state/value.
@@ -90,20 +95,26 @@ public:
   TH1D* TotalDisplay() const { return fTotalDisplay.get(); }
 
 private:
+  friend class Window;
   struct Marker {
     std::unique_ptr<TLine> line;
     std::uint64_t id = 0;
     bool background = false;
     bool upper = false;
     double anchor = 0.0;
+    std::uint64_t anchorId = 0;
   };
   void Changed();
   void ClearDrawings();
   void DrawMarkers();
   void RepaintStatus();
+  void ConstrainGates(Config& config, std::pair<double, double> oldRange,
+    std::pair<double, double> newRange) const;
+  std::vector<double> Anchors(const Config& config) const;
   TH2* fSource = nullptr;
   Config fConfig;
   std::array<Config, 2> fAxisConfigs;
+  std::array<std::pair<double, double>, 2> fViews{};
   Result fResult;
   std::unique_ptr<Window> fWindow;
   std::string fStatus;

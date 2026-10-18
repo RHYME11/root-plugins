@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <TGFrame.h>
+#include <MatrixGate/MatrixGateConfig.h>
 
 class TCanvas;
 class TGTextEntry;
@@ -34,6 +35,8 @@ public:
   bool Dirty() const;
   TCanvas* TotalCanvas() const;
   TCanvas* ResultCanvas() const;
+  void ForgetGate(Axis axis, bool background, std::uint64_t id);
+  void CollectRows(bool all = false);
 
 private:
   class Impl;

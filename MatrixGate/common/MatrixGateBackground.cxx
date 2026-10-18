@@ -91,7 +91,7 @@ std::unique_ptr<TH1D> EstimateProjectionBackground(const TH1D& total, const Back
       "TSpectrum requires at least 2 * iterations + 1 normal bins.");
     for(int bin = 1; bin <= count; ++bin) {
       values[bin - 1] = total.GetBinContent(bin);
-      Require(values[bin - 1] >= 0.0, "TSpectrum requires nonnegative total-projection bins.");
+      Require(std::isfinite(values[bin - 1]), "TSpectrum requires finite total-projection bins.");
     }
     int direction = TSpectrum::kBackDecreasingWindow;
     int order = TSpectrum::kBackOrder2;
@@ -130,8 +130,9 @@ std::unique_ptr<TH1D> EstimateProjectionBackground(const TH1D& total, const Back
   }
   auto background = EmptyLike(total, "_estimate", "Estimated projection background");
   for(int bin = 1; bin <= count; ++bin) {
-    Require(std::isfinite(values[bin - 1]) && values[bin - 1] >= 0.0,
-      "Projection background counts must be finite and nonnegative.");
+    Require(std::isfinite(values[bin - 1]), "Projection background counts must be finite.");
+    if(settings.model == SubtractionModel::RadWareStandard)
+      Require(values[bin - 1] >= 0.0, "RadWare projection background counts must be nonnegative.");
     background->SetBinContent(bin, values[bin - 1]);
   }
   background->ResetStats();

@@ -241,7 +241,8 @@ The GUI requires a native desktop ROOT session. `Compute` remains available in
 batch mode.
 
 The window shows the gated result on the left and the gate-axis total projection
-on the right. Raw, subtracted-background, and net layers can be shown separately
+on the right. `Raw` (signal-gated S), `Scaled BG` (the correction alpha * H),
+and `Net` (S - alpha * H) can be shown separately
 or overlaid; the estimated one-dimensional background curve is shown on the
 total projection when the selected method supplies one. Separate results are
 available through the `Shown result` selector. The `Report` tab describes the
@@ -256,14 +257,34 @@ removes the selected gate and Enter applies the editors. These shortcuts apply
 only to the total-projection canvas. The left canvas and unrelated canvases retain
 their native ROOT behavior.
 
-The `Gates` tab provides stable gate IDs, names, enabled flags, Low/High and
-Center/Width editors, a double slider, and the actual selected bin edges. Signal
-and background gates have separate blue and green markers. Manual Relative
-background bounds are offsets from the signal center; switching between absolute
-and relative templates converts the current bounds. X and Y keep independent
-settings, and switching axes restores them and recomputes the corresponding
-total projection. `Separate`, `Sum`, and `Union` use the same calculation as
-`Compute`.
+The `Gates` tab provides one scrollable slider row per gate, with a matching
+stable color, an enabled flag, and a Delete button. Select a row to edit its
+name and Low/High or Center/Width numerically; the actual selected bin edges
+appear below. Signal boundaries use dashed lines and BG boundaries use long
+dashes. Visible Signal/BG numbering is consecutive within each kind; stable
+internal identities need not be consecutive and do not retain deleted objects.
+Deleting a gate removes its controls, markers, cached settings, and old gated
+results, and immediately recalculates even with Auto Update off. A failed
+recalculation leaves the affected result empty with a diagnostic. Deleting the
+last Manual BG selects Template=None.
+
+Slider limits follow the **visible right-hand X-axis range**, in physical units.
+Every gate, including a disabled gate, stays inside that range. A zoom change
+preserves any gate that still fits unchanged. Only an out-of-view gate is mapped
+proportionally from the old visible interval to the new one, following the
+GRSISort slider interaction. Zoom changes that preserve all gates do not
+invalidate numerical results. New gates, numeric edits, marker drags, and
+center moves respect the same limits. Double-click in Pick mode on the right
+plot to move the selected center with its width fixed; near an edge the whole
+gate stops at the visible limit.
+
+Manual Relative numeric bounds are offsets from signal centers. The sliders
+show physical coordinates for the shown signal. All relative instances must
+fit inside the zoom, so their common allowed offset range can be narrower.
+Switching absolute/relative templates converts coordinates; an incompatible
+multi-signal arrangement produces a visible validation error. X and Y retain
+independent gates and zoom settings. `Separate`, `Sum`, and `Union` use the same
+calculation as `Compute`.
 
 The `Background` tab exposes template/RadWare models, fraction estimator,
 uncertainty convention, TSpectrum options, fit/normalization ranges, overlap
@@ -272,12 +293,27 @@ confirmation and compatible settings described below. Imported background
 vectors can be supplied in the initial config; `Use automatic curve` clears
 them. Template and RadWare settings are retained separately when changing models.
 `Template=None` disables subtraction while retaining inactive preferences.
+Adding a BG gate activates Manual (or retains Manual Relative); in RadWare mode,
+select Template subtraction first. Overlapping BG windows form a union under
+the selected overlap policy, rather than double-counting shared source bins.
+Only controls relevant to the current method are enabled. Manual f is used only
+by Fraction=Manual: **f=0 intentionally gives Scaled BG=0 and Net=Raw**. The
+status line displays this explicitly; selecting Template=Manual alone does not
+select Fraction=Manual. TSpectrum iterations/options apply to the automatic
+curve; fit-range controls apply to the local fitting estimators.
+
+Template+TSpectrum passes finite signed projection bins unchanged to ROOT's
+TSpectrum, matching jROOT's input handling. It also retains signed estimated or
+imported curve values. No clipping or source-bin/error modification is performed.
+This does not relax the nonnegative projection/background requirements of the
+separate RadWare model.
 
 `Update` commits all editors through one validation path and recalculates.
 `Auto Update` does so after a short editing pause, or after releasing a marker or
 slider drag. Invalid text stays in the editor with a diagnostic. Incomplete or
 mathematically invalid settings retain the last successful spectra and mark both
-plots and the report `OUT OF DATE`. Native X-axis zoom and log modes survive
+plots and the report `OUT OF DATE`. The error appears above the canvases and
+at the start of Report. Native X-axis zoom and log modes survive
 updates. Display histograms are detached copies, so native edits cannot alter
 the stored calculation snapshot. Changes made externally to the source require
 an explicit `Update`.
@@ -425,7 +461,8 @@ reversed intervals.
 TSpectrum settings are `spectrumIterations` (default 25) and `spectrumOptions`,
 for example `"BackOrder4 nosmoothing"`. The 25-, 10-, and 30-iteration/order-4
 reference settings can be selected explicitly. At least `2 * iterations + 1`
-normal bins and nonnegative total-projection counts are required. Options are
+normal bins and finite total-projection counts are required. Template mode preserves
+signed bins; RadWare retains its nonnegative-count constraints. Options are
 validated; drawing options such as `same` are rejected. TSpectrum works in bin
 index space, including for variable-width axes.
 
@@ -608,6 +645,8 @@ tests/matrixgate-build/matrixgate-tests/matrixgate_session_tests --gui
 ```
 
 This checks widget commits, two-edge picks, double-clicks, ROOT-native marker
-drags, slider deferral, automatic updates, zoom preservation, model switching,
-multiple sources, file/source deletion, and repeated window cleanup. `--demo`
+drags, per-gate slider deferral, automatic updates, preservation of visible gates,
+proportional zoom mapping, relative-window limits, model switching, multiple
+sources, complete gate deletion, native widget reclamation, file/source deletion,
+and repeated window cleanup. `--demo`
 also saves native Gates/Background/Report screenshots in `tests/matrixgate-tmp/`.
