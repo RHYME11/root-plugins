@@ -194,7 +194,7 @@ Window::Window(Session* session) : TGMainFrame(gClient->GetRoot(), 1320, 870), f
     return output;
   };
   fImpl->target = new TGLabel(this, (std::string("Source: ") + session->Source()->GetName() +
-    " | Left: gated result | Right: gate-axis total projection").c_str());
+    " | Left: gate-axis total projection | Right: gated result").c_str());
   AddFrame(fImpl->target, new TGLayoutHints(kLHintsExpandX, 10, 10, 6, 2));
   auto* toolbar = row(this);
   combo(toolbar, "Gate axis", kAxis, {{0, "X -> Y"}, {1, "Y -> X"}}, 95);
@@ -211,12 +211,12 @@ Window::Window(Session* session) : TGMainFrame(gClient->GetRoot(), 1320, 870), f
   auto* canvases = new TGHorizontalFrame(this, 1300, 410, kFixedHeight);
   fImpl->result = new TRootEmbeddedCanvas("MatrixGateResult", canvases, 640, 410);
   fImpl->total = new TRootEmbeddedCanvas("MatrixGateTotal", canvases, 640, 410);
-  canvases->AddFrame(fImpl->result, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
   canvases->AddFrame(fImpl->total, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
+  canvases->AddFrame(fImpl->result, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
   AddFrame(canvases, new TGLayoutHints(kLHintsExpandX, 4, 4, 0, 0));
   auto* resultRow = row(this);
   combo(resultRow, "Shown result", kResult, {}, 460);
-  label(resultRow, "Gate colors match rows | Pick mode: double-click RIGHT plot to move selected center (same width)");
+  label(resultRow, "Gate colors match rows | Pick mode: double-click LEFT plot to move selected center (same width)");
   auto* tabs = new TGTab(this, 1280, 260);
   AddFrame(tabs, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 2, 2));
   auto* gates = tabs->AddTab("Gates");
@@ -271,8 +271,8 @@ Window::Window(Session* session) : TGMainFrame(gClient->GetRoot(), 1320, 870), f
   fImpl->entries.at(kFraction)->SetToolTipText("Fraction of Raw integral assigned to background (0..1). f=0 intentionally gives Net=Raw. Used only by Fraction=Manual.");
   fImpl->entries.at(kIterations)->SetToolTipText("TSpectrum clipping iterations. Signed bins are passed unchanged in Template mode.");
   fImpl->entries.at(kLow)->SetToolTipText("Physical lower edge; Manual Relative uses offsets from the signal center. All physical instances must remain inside the zoom.");
-  fImpl->entries.at(kHigh)->SetToolTipText("Exclusive upper edge. Slider bounds follow the visible right-hand X axis.");
-  fImpl->buttons.at(kPick)->SetToolTipText("On the RIGHT total plot: two clicks set edges; double-click moves the selected gate center without changing width; drag a boundary to resize.");
+  fImpl->entries.at(kHigh)->SetToolTipText("Exclusive upper edge. Slider bounds follow the visible left-hand X axis.");
+  fImpl->buttons.at(kPick)->SetToolTipText("On the LEFT total plot: two clicks set edges; double-click moves the selected gate center without changing width; drag a boundary to resize.");
   Refresh(true);
 }
 

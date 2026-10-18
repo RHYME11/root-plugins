@@ -240,8 +240,8 @@ alive; MatrixGate neither owns it nor changes its bin contents or axis ranges.
 The GUI requires a native desktop ROOT session. `Compute` remains available in
 batch mode.
 
-The window shows the gated result on the left and the gate-axis total projection
-on the right. `Raw` (signal-gated S), `Scaled BG` (the correction alpha * H),
+The window shows the gate-axis total projection on the left, above the gate
+sliders, and the gated result on the right. `Raw` (signal-gated S), `Scaled BG` (the correction alpha * H),
 and `Net` (S - alpha * H) can be shown separately
 or overlaid; the estimated one-dimensional background curve is shown on the
 total projection when the selected method supplies one. Separate results are
@@ -254,7 +254,7 @@ center, or drag a dashed boundary. `Browse` (also Escape) pauses plugin picking
 while ROOT's native axis, zoom, object, and context-menu interactions remain
 available. Ordinary canvas drags are not interpreted as two-edge picks. Delete
 removes the selected gate and Enter applies the editors. These shortcuts apply
-only to the total-projection canvas. The left canvas and unrelated canvases retain
+only to the total-projection canvas. The result canvas and unrelated canvases retain
 their native ROOT behavior.
 
 The `Gates` tab provides one scrollable slider row per gate, with a matching
@@ -268,13 +268,13 @@ results, and immediately recalculates even with Auto Update off. A failed
 recalculation leaves the affected result empty with a diagnostic. Deleting the
 last Manual BG selects Template=None.
 
-Slider limits follow the **visible right-hand X-axis range**, in physical units.
+Slider limits follow the **visible left-hand X-axis range**, in physical units.
 Every gate, including a disabled gate, stays inside that range. A zoom change
 preserves any gate that still fits unchanged. Only an out-of-view gate is mapped
 proportionally from the old visible interval to the new one, following the
 GRSISort slider interaction. Zoom changes that preserve all gates do not
 invalidate numerical results. New gates, numeric edits, marker drags, and
-center moves respect the same limits. Double-click in Pick mode on the right
+center moves respect the same limits. Double-click in Pick mode on the left
 plot to move the selected center with its width fixed; near an edge the whole
 gate stops at the visible limit.
 
@@ -457,6 +457,18 @@ reversed intervals.
 | `LinearFixed` | Gaussian plus an endpoint-derived fixed linear baseline |
 | `PolynomialFlex` | Gaussian plus a fitted quadratic baseline |
 | `Width` | Direct `alpha = signal physical width / template physical width` |
+
+Template selection determines the background spectrum **shape** H. Fraction
+selection determines **how much** of that shape is subtracted. Estimated fractions
+come from a baseline under the signal gate on the gate-axis total projection;
+they do not measure the geometric overlap of signal and background windows.
+If the two windows select exactly the same source bins (and the overlap policy
+retains them), H=S and the default normalization gives alpha=f, so
+`Net=(1-f)*Raw`. A small TSpectrum baseline fraction therefore retains a large
+peak even for identical windows. Manual f=1 cancels identical windows. Width
+ratio bypasses fraction estimation and uses the actual selected physical widths;
+identical masks have alpha=1 and Net=0. Nearby but different windows need not
+cancel, and a flat residual alone does not establish a valid background choice.
 
 TSpectrum settings are `spectrumIterations` (default 25) and `spectrumOptions`,
 for example `"BackOrder4 nosmoothing"`. The 25-, 10-, and 30-iteration/order-4

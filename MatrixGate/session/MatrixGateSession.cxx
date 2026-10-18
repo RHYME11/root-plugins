@@ -549,14 +549,14 @@ void Session::Render(bool resetView) {
   if(fClosed || !Alive(TotalCanvas()) || !Alive(ResultCanvas())) return;
   if(!resetView) SyncView(false);
   const auto range = VisibleRange();
-  const View rightView{true, range.first, range.second};
-  View leftView;
-  if(!resetView) for(const auto& display : fDisplays) if(display) { leftView = ReadView(display.get()); break; }
+  const View gateView{true, range.first, range.second};
+  View resultView;
+  if(!resetView) for(const auto& display : fDisplays) if(display) { resultView = ReadView(display.get()); break; }
   ClearDrawings();
   TVirtualPad::TContext context(TotalCanvas());
   if(!fResult.total) return;
   fTotalDisplay = Copy(*fResult.total);
-  RestoreView(*fTotalDisplay, rightView);
+  RestoreView(*fTotalDisplay, gateView);
   fTotalDisplay->SetTitle((std::string("Gate axis: ") + ToString(fResult.config.gateAxis) + " - Total projection").c_str());
   fTotalDisplay->Draw("hist");
   if(fResult.estimatedBackground) {
@@ -578,7 +578,7 @@ void Session::Render(bool resetView) {
     double minimum = 0.0;
     for(int layer = 0; layer < 3; ++layer) if(shown[layer] && sources[layer]) {
       fDisplays[layer] = Copy(*sources[layer]);
-      RestoreView(*fDisplays[layer], leftView);
+      RestoreView(*fDisplays[layer], resultView);
       maximum = std::max(maximum, fDisplays[layer]->GetMaximum());
       minimum = std::min(minimum, fDisplays[layer]->GetMinimum());
     }
