@@ -20,7 +20,6 @@
 #include <TColor.h>
 #include <TSystem.h>
 #include <TROOT.h>
-#include <TVirtualX.h>
 #include <TGTab.h>
 #include <TGTextEntry.h>
 #include <TGClient.h>
@@ -496,7 +495,6 @@ Bool_t Window::ProcessMessage(Long_t message, Long_t first, Long_t second) {
   if(first == kActivePlot && action == kCM_COMBOBOX) {
     auto* canvas = second == 0 ? TotalCanvas() : ResultCanvas();
     session->Activate(canvas);
-    if(canvas->GetCanvasID() >= 0) gVirtualX->SetInputFocus(gVirtualX->GetWindowID(canvas->GetCanvasID()));
     return kTRUE;
   }
   if(first == kRebin || first == kUndo) { session->Rebin(session->ActiveCanvas(), first == kUndo); return kTRUE; }

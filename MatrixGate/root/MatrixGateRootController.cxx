@@ -162,7 +162,7 @@ void RootController::OnCanvasEvent(Int_t event, Int_t px, Int_t py, TObject* sel
     }
   }
   if(!owner) return;
-  if(event != kMouseLeave) owner->Activate(canvas);
+  if(event == kButton1Down || event == kButton1Shift || event == kButton1Double) owner->Activate(canvas);
   if(event == kArrowKeyPress) {
     if(fImpl->arrowCanvas != canvas || !fImpl->arrowKey) return;
     py = static_cast<int>(fImpl->arrowKey);
@@ -188,7 +188,6 @@ void RootController::OnCanvasEvent(Int_t event, Int_t px, Int_t py, TObject* sel
 // Purpose: Apply one key even immediately after ROOT clears its selected drawing.
 // Inputs: Owning session/canvas/normalized key. Outputs: One plot-local action or native dialog.
 void RootController::HandleKey(Session* owner, TCanvas* canvas, int key) {
-  owner->Activate(canvas);
   if(key == kKey_f) { owner->OpenPhotoPeak(owner->ControlWindow()->FitLayer()); return; }
   if(key == kKey_E && owner->Display(canvas) && !gROOT->IsBatch()) {
     auto* histogram = owner->Display(canvas);
@@ -228,7 +227,6 @@ void RootController::OnGuiEvent(Event_t* event, Window_t) {
     for(auto* canvas : {session->TotalCanvas(), session->ResultCanvas()}) {
       if(canvas && canvas->GetCanvasID() >= 0 &&
         gVirtualX->GetWindowID(canvas->GetCanvasID()) == event->fWindow) {
-        session->Activate(canvas);
         if((viewKey || range) && !canvas->GetSelected()) {
           const int normalized = range ? kKey_E : static_cast<int>(key);
           HandleKey(session.get(), canvas, normalized);

@@ -24,6 +24,7 @@
 #include <TPaveText.h>
 #include <TROOT.h>
 #include <TSystem.h>
+#include <TVirtualX.h>
 
 namespace MatrixGate::Detail {
 namespace {
@@ -563,9 +564,11 @@ void Session::SetResultIndex(std::size_t index) { fResultIndex = index; Render()
 void Session::SetGesture(bool active) { fGesture = active; if(!active) fDue = static_cast<unsigned long long>(gSystem->Now()) + 150; }
 
 // ============== Activate ==============
-// Purpose: Keep the red frame and shared tools aligned with the receiving canvas. Inputs: Canvas. Outputs: Selected plot.
+// Purpose: Select and focus a canvas after a left click or explicit toolbar choice. Inputs: Canvas. Outputs: Red frame and key target.
 void Session::Activate(TCanvas* canvas) {
-  if(canvas != TotalCanvas() && canvas != ResultCanvas()) return;
+  if(fClosed || !canvas || (canvas != TotalCanvas() && canvas != ResultCanvas())) return;
+  if(gVirtualX && canvas->GetCanvasID() >= 0)
+    gVirtualX->SetInputFocus(gVirtualX->GetWindowID(canvas->GetCanvasID()));
   const bool total = canvas == TotalCanvas();
   if(total == fActiveTotal) return;
   fActiveTotal = total;

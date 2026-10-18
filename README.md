@@ -257,11 +257,12 @@ removes the selected gate and Enter applies the editors. These shortcuts apply
 only to the total-projection canvas. The result canvas and unrelated canvases retain
 their native ROOT behavior.
 
-Both canvases support these shortcuts; the receiving native canvas window,
+Left-click a canvas to select it and give it keyboard focus. Both canvases
+support these shortcuts; the receiving native canvas window,
 rather than the globally current pad, selects the target. Text-entry and unrelated
 canvas keystrokes do not operate MatrixGate plots. The shortcuts also work in Browse.
 
-| Key over the target canvas | Action |
+| Key in the focused canvas | Action |
 |---|---|
 | Left / Right arrow | Pan that plot by 10% of its visible X span |
 | `o` | Unzoom that plot's X/Y axes and restore automatic Y scaling |
@@ -271,8 +272,11 @@ canvas keystrokes do not operate MatrixGate plots. The shortcuts also work in Br
 | `f` | Open PhotoPeakFit for that plot in a separate fitting canvas |
 
 One shared toolbar contains Rebin, Undo, the current factor, and PhotoPeakFit.
-The red frame and `Active plot` selector identify its target. Moving into or
-using either canvas updates the target; the selector can also choose it explicitly.
+The red frame and `Active plot` selector identify its target. Only a left click
+on a canvas switches the target automatically; hovering, entering/leaving a
+canvas, and right/middle clicks do not switch it. The selector can also choose
+and focus a target explicitly. Returning from an editor, left-click the desired
+canvas to resume its shortcuts.
 Keyboard events still operate only the canvas receiving the native event, so
 typing in an editor or using an unrelated canvas cannot operate the red-framed plot.
 Display binning is independent for the two plots and for each gate-axis direction,
@@ -284,8 +288,8 @@ or source-bin gate selection. Result overlays share a Y scale computed from
 the currently visible X interval, including negative counts. Explicit native Y
 limits are retained until unzoomed with `o` or ROOT's axis controls.
 
-For fitting, select Total or Result and click `PhotoPeakFit (f)` (or press `f`
-over that canvas). For Result, `Fit layer` explicitly selects Raw, Scaled BG,
+For fitting, select Total or Result and click `PhotoPeakFit (f)` (or left-click
+that canvas and press `f`). For Result, `Fit layer` explicitly selects Raw, Scaled BG,
 or Net, independently of the visible overlay checkboxes and for the currently
 shown gate result. Total always fits the total projection. PhotoPeakFit is
 loaded on demand from beside MatrixGate or ROOT's dynamic library search path;
