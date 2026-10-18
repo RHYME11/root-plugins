@@ -3,7 +3,8 @@
 Optional plugins for CERN ROOT. Each plugin is an independent top-level unit.
 PhotoPeakFit runs directly in native ROOT with an English, non-modal fitting
 control panel linked to the existing histogram canvas.
-MatrixGate provides read-only TH2 projections through a separate ROOT library.
+MatrixGate provides native ROOT TH2 gating, background subtraction, and interactive
+dual-canvas analysis through a separate ROOT library.
 It supports X/Y gates, Separate/Sum/Union, template subtraction, and the RadWare
 standard 2D background model. The control window and fitting integration are later stages.
 
@@ -213,11 +214,73 @@ Native `TCanvas` is supported; web canvases and `RCanvas` are outside this stage
 
 ## MatrixGate projections
 
-Load the independent plugin in native ROOT, including batch mode:
+Load the independent plugin in native ROOT:
 
 ```bash
 root -l build/LoadMatrixGate.C
 ```
+
+For an existing `TH2 *gg`, open the native control window with:
+
+```cpp
+MatrixGate::Start(gg);
+// After changing the matrix contents externally:
+MatrixGate::Update(gg);
+// Close one window, or all MatrixGate windows:
+MatrixGate::Stop(gg);
+MatrixGate::StopAll();
+```
+
+`Start` and `Update` return `false` on failure; `MatrixGate::LastError()` gives the
+diagnostic. `Start(gg, config)` accepts initial settings. Calling `Start` again for
+the same matrix raises its existing window. Each source matrix has an independent
+window, and deleting the source, closing its owning file, or closing either
+embedded canvas releases the session. The source is borrowed and must remain
+alive; MatrixGate neither owns it nor changes its bin contents or axis ranges.
+The GUI requires a native desktop ROOT session. `Compute` remains available in
+batch mode.
+
+The window shows the gated result on the left and the gate-axis total projection
+on the right. Raw, subtracted-background, and net layers can be shown separately
+or overlaid; the estimated one-dimensional background curve is shown on the
+total projection when the selected method supplies one. Separate results are
+available through the `Shown result` selector. The `Report` tab describes the
+last successful numerical snapshot, including normalization and uncertainties.
+
+In `Pick range` mode, click two edges on the total projection to edit the selected
+gate; with no selection this creates a signal gate. Double-click to move its
+center, or drag a dashed boundary. `Browse` (also Escape) pauses plugin picking
+while ROOT's native axis, zoom, object, and context-menu interactions remain
+available. Ordinary canvas drags are not interpreted as two-edge picks. Delete
+removes the selected gate and Enter applies the editors. These shortcuts apply
+only to the total-projection canvas. The left canvas and unrelated canvases retain
+their native ROOT behavior.
+
+The `Gates` tab provides stable gate IDs, names, enabled flags, Low/High and
+Center/Width editors, a double slider, and the actual selected bin edges. Signal
+and background gates have separate blue and green markers. Manual Relative
+background bounds are offsets from the signal center; switching between absolute
+and relative templates converts the current bounds. X and Y keep independent
+settings, and switching axes restores them and recomputes the corresponding
+total projection. `Separate`, `Sum`, and `Union` use the same calculation as
+`Compute`.
+
+The `Background` tab exposes template/RadWare models, fraction estimator,
+uncertainty convention, TSpectrum options, fit/normalization ranges, overlap
+policy, and explicit flow-bin flags. RadWare requires the symmetric-gamma-gamma
+confirmation and compatible settings described below. Imported background
+vectors can be supplied in the initial config; `Use automatic curve` clears
+them. Template and RadWare settings are retained separately when changing models.
+`Template=None` disables subtraction while retaining inactive preferences.
+
+`Update` commits all editors through one validation path and recalculates.
+`Auto Update` does so after a short editing pause, or after releasing a marker or
+slider drag. Invalid text stays in the editor with a diagnostic. Incomplete or
+mathematically invalid settings retain the last successful spectra and mark both
+plots and the report `OUT OF DATE`. Native X-axis zoom and log modes survive
+updates. Display histograms are detached copies, so native edits cannot alter
+the stored calculation snapshot. Changes made externally to the source require
+an explicit `Update`.
 
 The following example is self-contained at the ROOT prompt:
 
@@ -296,9 +359,8 @@ its spectra; destroy it or move it to transfer ownership. A failure returns
 
 Every projection also owns `subtracted` and `net` spectra, statistical-variance
 and scale-uncertainty components. With `background.model=None`, `subtracted` is
-zero and `net` equals `raw`. MatrixGate currently uses ordinary ROOT canvases;
-its session/control window and optional PhotoPeakFit connector are later stages.
-It does not link to PhotoPeakFit or GRSISort.
+zero and `net` equals `raw`. MatrixGate does not link to PhotoPeakFit or GRSISort;
+export and the optional PhotoPeakFit connector remain later stages.
 
 ### Template background subtraction
 
@@ -458,8 +520,9 @@ Reference baselines:
 
 The calculation lives in `MatrixGate/common/`, the public types in
 `MatrixGate/include/MatrixGate/`, and the ROOT entry, dictionary, and loader in
-`MatrixGate/root/`. GUI, sessions, export, and the
-optional PhotoPeakFit connector will build on these layers.
+`MatrixGate/root/`. Independent session state and native controls live in
+`MatrixGate/session/` and `MatrixGate/gui/`. Export and the optional PhotoPeakFit
+connector will build on these layers.
 
 ## Code structure
 
@@ -537,3 +600,14 @@ sideband gaps, conditional covariance and scale presets, variable-bin width and
 fraction conventions, per-gate Sum normalization, TSpectrum's direct array API,
 known Gaussian/linear/quadratic baselines, the explicitly summed RadWare 2D
 formula, variance floors, negative net bins, and source preservation.
+The session checks cover axis-specific settings and retention of failed drafts
+and historical snapshots. With a native desktop GUI, run:
+
+```bash
+tests/matrixgate-build/matrixgate-tests/matrixgate_session_tests --gui
+```
+
+This checks widget commits, two-edge picks, double-clicks, ROOT-native marker
+drags, slider deferral, automatic updates, zoom preservation, model switching,
+multiple sources, file/source deletion, and repeated window cleanup. `--demo`
+also saves native Gates/Background/Report screenshots in `tests/matrixgate-tmp/`.

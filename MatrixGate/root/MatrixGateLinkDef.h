@@ -23,4 +23,10 @@
 #pragma link C++ class MatrixGate::Projection-;
 #pragma link C++ class MatrixGate::Result-;
 #pragma link C++ function MatrixGate::Compute;
+#pragma link C++ function MatrixGate::Start;
+#pragma link C++ function MatrixGate::Update;
+#pragma link C++ function MatrixGate::Stop;
+#pragma link C++ function MatrixGate::StopAll;
+#pragma link C++ function MatrixGate::LastError;
+#pragma link C++ class MatrixGate::Detail::RootController+;
 #endif

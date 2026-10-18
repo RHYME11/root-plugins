@@ -1,10 +1,10 @@
 cmake_minimum_required(VERSION 3.13)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  project(MatrixGate VERSION 0.2.0 LANGUAGES CXX)
+  project(MatrixGate VERSION 0.3.0 LANGUAGES CXX)
 endif()
 
-find_package(ROOT REQUIRED COMPONENTS Core RIO Hist Matrix MathCore Spectrum Minuit2)
+find_package(ROOT REQUIRED COMPONENTS Core RIO Hist Matrix MathCore Spectrum Minuit2 Graf Gpad Gui)
 include(GNUInstallDirs)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR}")
 
@@ -13,16 +13,20 @@ add_library(MatrixGate SHARED
   common/MatrixGateBackground.cxx
   common/MatrixGateProjection.cxx
   common/MatrixGateResult.cxx
+  session/MatrixGateSession.cxx
+  gui/MatrixGateWindow.cxx
+  gui/MatrixGateReportView.cxx
   root/MatrixGateRoot.cxx
+  root/MatrixGateRootController.cxx
 )
 target_compile_features(MatrixGate PUBLIC cxx_std_17)
 target_include_directories(MatrixGate PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE common
+  PRIVATE common session gui
 )
 target_link_libraries(MatrixGate PUBLIC ROOT::Core ROOT::RIO ROOT::Hist
-  ROOT::Matrix ROOT::MathCore ROOT::Spectrum ROOT::Minuit2)
+  ROOT::Matrix ROOT::MathCore ROOT::Spectrum ROOT::Minuit2 ROOT::Graf ROOT::Gpad ROOT::Gui)
 set_target_properties(MatrixGate PROPERTIES
   CXX_EXTENSIONS OFF
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
@@ -30,6 +34,7 @@ set_target_properties(MatrixGate PROPERTIES
 
 ROOT_GENERATE_DICTIONARY(G__MatrixGate
   MatrixGate/MatrixGateRoot.h
+  MatrixGate/detail/MatrixGateRootController.h
   MODULE MatrixGate
   LINKDEF root/MatrixGateLinkDef.h
   NOINSTALL
