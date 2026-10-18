@@ -257,6 +257,28 @@ removes the selected gate and Enter applies the editors. These shortcuts apply
 only to the total-projection canvas. The result canvas and unrelated canvases retain
 their native ROOT behavior.
 
+Both canvases support these shortcuts; the receiving native canvas window,
+rather than the globally current pad, selects the target. Text-entry and unrelated
+canvas keystrokes do not operate MatrixGate plots. The shortcuts also work in Browse.
+
+| Key over the target canvas | Action |
+|---|---|
+| Left / Right arrow | Pan that plot by 10% of its visible X span |
+| `o` | Unzoom that plot's X/Y axes and restore automatic Y scaling |
+| `w` | Rebin that plot's display by another factor of two |
+| `q` | Undo one rebin step on that plot |
+| Shift+E | Open ROOT's native X-axis `SetRangeUser` dialog for that plot |
+
+Each plot also has its own Rebin and Undo buttons and factor label. Display
+binning is independent for the two plots and for each gate-axis direction,
+and survives recalculation. Rebin rebuilds from the immutable original spectra,
+retains a final incomplete group, sums counts and statistical variances, and
+preserves the common subtraction-scale covariance in BG/net errors. Undo
+restores the finer display without altering the source TH2, calculation spectra,
+or source-bin gate selection. Result overlays share a Y scale computed from
+the currently visible X interval, including negative counts. Explicit native Y
+limits are retained until unzoomed with `o` or ROOT's axis controls.
+
 The `Gates` tab provides one scrollable slider row per gate, with a matching
 stable color, an enabled flag, and a Delete button. Select a row to edit its
 name and Low/High or Center/Width numerically; the actual selected bin edges
@@ -296,6 +318,16 @@ them. Template and RadWare settings are retained separately when changing models
 Adding a BG gate activates Manual (or retains Manual Relative); in RadWare mode,
 select Template subtraction first. Overlapping BG windows form a union under
 the selected overlap policy, rather than double-counting shared source bins.
+For direct gate-width subtraction, select Model=Template subtraction,
+Template=Manual, and Fraction=Width ratio. Add a signal and use `+ Background`
+once for each background interval. Position the BG rows separately (usually on
+either side of the signal peak); `On` includes a row and Delete removes it.
+For nonoverlapping BG intervals, H is the sum of their gated projections and
+`alpha = signal width / sum(BG widths)`. For a signal of width 10 and two BG
+windows of width 10 each, the correction is `0.5 * (H1 + H2)`. Overlapping BG
+bins count once; all widths are actual selected-bin physical widths after the
+chosen Manual overlap rule. `Report` lists the actual windows and coefficients.
+
 Only controls relevant to the current method are enabled. Manual f is used only
 by Fraction=Manual: **f=0 intentionally gives Scaled BG=0 and Net=Raw**. The
 status line displays this explicitly; selecting Template=Manual alone does not
@@ -657,7 +689,9 @@ tests/matrixgate-build/matrixgate-tests/matrixgate_session_tests --gui
 ```
 
 This checks widget commits, two-edge picks, double-clicks, ROOT-native marker
-drags, per-gate slider deferral, automatic updates, preservation of visible gates,
+drags, per-gate slider deferral, automatic updates, per-canvas native keys,
+independent rebin/undo, visible-range Y scaling, Shift+E Apply/Cancel,
+preservation of visible gates,
 proportional zoom mapping, relative-window limits, model switching, multiple
 sources, complete gate deletion, native widget reclamation, file/source deletion,
 and repeated window cleanup. `--demo`

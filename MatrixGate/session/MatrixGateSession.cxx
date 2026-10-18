@@ -37,11 +37,30 @@ bool Alive(TCanvas* canvas) {
 }
 
 // ============== Copy ==============
-// Purpose: Separate native display edits from calculation snapshots. Inputs: Spectrum. Outputs: Detached clone.
-std::unique_ptr<TH1D> Copy(const TH1D& source) {
+// Purpose: Clone and group display bins, retaining shared scale covariance. Inputs: Spectrum/group size/common shifts. Outputs: Detached display.
+std::unique_ptr<TH1D> Copy(const TH1D& source, int factor = 1, const std::vector<double>* commonShift = nullptr) {
   TDirectory::TContext context(nullptr);
   auto output = std::unique_ptr<TH1D>(static_cast<TH1D*>(source.Clone((std::string(source.GetName()) + "_view").c_str())));
   output->SetDirectory(nullptr);
+  if(factor > 1) {
+    std::vector<double> edges;
+    for(int bin = 1; bin <= source.GetNbinsX(); bin += factor)
+      edges.push_back(source.GetXaxis()->GetBinLowEdge(bin));
+    edges.push_back(source.GetXaxis()->GetBinUpEdge(source.GetNbinsX()));
+    auto* grouped = static_cast<TH1D*>(output->Rebin(static_cast<int>(edges.size() - 1),
+      (std::string(source.GetName()) + "_grouped_view").c_str(), edges.data()));
+    grouped->SetDirectory(nullptr); output.reset(grouped);
+    if(commonShift) for(int group = 1; group <= output->GetNbinsX(); ++group) {
+      double variance = 0.0, shift = 0.0, diagonalShift = 0.0;
+      const int first = (group - 1) * factor + 1;
+      for(int bin = first; bin <= std::min(first + factor - 1, source.GetNbinsX()); ++bin) {
+        variance += std::pow(source.GetBinError(bin), 2);
+        shift += (*commonShift)[bin]; diagonalShift += std::pow((*commonShift)[bin], 2);
+      }
+      output->SetBinError(group, std::sqrt(std::max(0.0, variance + shift * shift - diagonalShift)));
+    }
+  }
+  output->SetMinimum(); output->SetMaximum();
   output->SetStats(false);
   return output;
 }
@@ -105,8 +124,9 @@ Session::Session(TH2* source, Config config, Result initial, bool openWindow)
   fStatus = "Ready. Pick two edges or double-click a center on the total projection.";
   if(openWindow) {
     fWindow = std::make_unique<Window>(this);
-    TotalCanvas()->Connect(kEvent, kReceiver, &RootController::Instance(),
-      "OnCanvasEvent(Int_t,Int_t,Int_t,TObject*)");
+    for(auto* canvas : {TotalCanvas(), ResultCanvas()})
+      canvas->Connect(kEvent, kReceiver, &RootController::Instance(),
+        "OnCanvasEvent(Int_t,Int_t,Int_t,TObject*)");
     fWindow->Show();
     Render();
   }
@@ -362,6 +382,7 @@ void Session::Tick() {
   if(fWindow && (!Alive(TotalCanvas()) || !Alive(ResultCanvas()))) { Close(); return; }
   if(fWindow) fWindow->CollectRows();
   SyncView();
+  SyncResultView();
   if(fPending && !fGesture && static_cast<unsigned long long>(gSystem->Now()) >= fDue) {
     fPending = false;
     if(fWindow) fWindow->Submit(true);
@@ -376,7 +397,8 @@ void Session::Close(bool sourceDeleted) {
   fClosed = true;
   fPending = false;
   if(sourceDeleted) fSource = nullptr;
-  if(Alive(TotalCanvas())) TotalCanvas()->Disconnect(nullptr, &RootController::Instance());
+  for(auto* canvas : {TotalCanvas(), ResultCanvas()})
+    if(Alive(canvas)) canvas->Disconnect(nullptr, &RootController::Instance());
   if(fWindow) fWindow->Detach();
 }
 
@@ -532,6 +554,98 @@ void Session::SetResultIndex(std::size_t index) { fResultIndex = index; Render()
 // Purpose: Suspend updates while native widgets hold a drag. Inputs: Active flag. Outputs: Gesture guard.
 void Session::SetGesture(bool active) { fGesture = active; if(!active) fDue = static_cast<unsigned long long>(gSystem->Now()) + 150; }
 
+// ============== Display ==============
+// Purpose: Resolve the plotted histogram without using global pad focus. Inputs: Owned canvas. Outputs: Display clone.
+TH1D* Session::Display(TCanvas* canvas) const {
+  if(canvas == TotalCanvas()) return fTotalDisplay.get();
+  if(canvas == ResultCanvas()) for(const auto& display : fDisplays) if(display) return display.get();
+  return nullptr;
+}
+
+// ============== RebinFactor ==============
+// Purpose: Read independent per-axis display grouping. Inputs: Total/result selector. Outputs: Original-bin group size.
+int Session::RebinFactor(bool total) const {
+  return fRebinFactors[fConfig.gateAxis == Axis::X ? 0 : 1][total ? 0 : 1];
+}
+
+// ============== Pan ==============
+// Purpose: Move only the addressed plot by ten percent of its visible span. Inputs: Canvas/direction. Outputs: Updated view.
+void Session::Pan(TCanvas* canvas, int direction) {
+  auto* display = Display(canvas);
+  if(fClosed || !Alive(canvas) || !display || fGesture) return;
+  TVirtualPad::TContext context(canvas);
+  const auto view = ReadView(display);
+  const auto* axis = display->GetXaxis();
+  const double span = std::min(view.high - view.low, axis->GetXmax() - axis->GetXmin());
+  const double low = std::clamp(view.low + direction * 0.1 * span, axis->GetXmin(), axis->GetXmax() - span);
+  display->GetXaxis()->SetRangeUser(low, low + span);
+  canvas->Modified(); canvas->Update();
+  if(canvas == TotalCanvas()) SyncView(); else SyncResultView();
+}
+
+// ============== Unzoom ==============
+// Purpose: Restore both native axes on one plot. Inputs: Owned canvas. Outputs: Full view and refreshed overlays.
+void Session::Unzoom(TCanvas* canvas) {
+  auto* display = Display(canvas);
+  if(fClosed || !Alive(canvas) || !display || fGesture) return;
+  TVirtualPad::TContext context(canvas);
+  display->GetXaxis()->UnZoom(); display->GetYaxis()->UnZoom();
+  display->SetMinimum(); display->SetMaximum();
+  if(canvas == ResultCanvas()) { fManualResultY = false; SyncResultView(true); }
+  canvas->Modified(); canvas->Update();
+  if(canvas == TotalCanvas()) SyncView();
+}
+
+// ============== Rebin ==============
+// Purpose: Group display bins or undo one grouping step using immutable calculation snapshots.
+// Inputs: Canvas/undo flag. Outputs: Only this plot changes binning; source and gate masks remain unchanged.
+void Session::Rebin(TCanvas* canvas, bool undo) {
+  auto* display = Display(canvas);
+  if(fClosed || !Alive(canvas) || !display || fGesture) return;
+  auto& factor = fRebinFactors[fConfig.gateAxis == Axis::X ? 0 : 1][canvas == TotalCanvas() ? 0 : 1];
+  if(undo) { if(factor == 1) return; factor /= 2; }
+  else { if(display->GetNbinsX() < 2) return; factor *= 2; }
+  Render();
+}
+
+// ============== SyncResultView ==============
+// Purpose: Fit all visible result layers to the current X range while preserving explicit native Y limits.
+// Inputs: Optional redraw recalculation. Outputs: Synchronized overlays and shared Y scale.
+bool Session::SyncResultView(bool force) {
+  auto* display = Display(ResultCanvas());
+  if(fClosed || !display || !Alive(ResultCanvas())) return false;
+  const auto view = ReadView(display);
+  const std::pair<double, double> range{view.low, view.high};
+  const std::pair<double, double> stored{display->GetMinimumStored(), display->GetMaximumStored()};
+  const bool nativeReset = stored.first == -1111 && stored.second == -1111;
+  if(!force) {
+    if(nativeReset) fManualResultY = false;
+    else if(stored != fAutoResultY) { fManualResultY = true; fManualResultYRange = stored; }
+  }
+  const bool logY = ResultCanvas()->GetLogy();
+  if(!force && range == fObservedResultRange && logY == fObservedLogY && !nativeReset) return false;
+  fObservedResultRange = range; fObservedLogY = logY;
+  double maximum = 0.0, minimum = 0.0;
+  double positive = std::numeric_limits<double>::infinity();
+  for(auto& layer : fDisplays) if(layer) {
+    layer->GetXaxis()->SetRangeUser(view.low, view.high);
+    const auto* axis = layer->GetXaxis();
+    for(int bin = std::max(1, axis->GetFirst()); bin <= std::min(layer->GetNbinsX(), axis->GetLast()); ++bin) {
+      const double value = layer->GetBinContent(bin);
+      maximum = std::max(maximum, value); minimum = std::min(minimum, value);
+      if(value > 0) positive = std::min(positive, value);
+    }
+  }
+  const double high = maximum > 0 ? maximum * (logY ? 1.5 : 1.15) : 1.0;
+  const double low = logY ? (std::isfinite(positive) ? positive * 0.5 : high * 0.01) : (minimum < 0 ? minimum * 1.15 : 0.0);
+  if(!fManualResultY) fAutoResultY = {low, high};
+  const auto limits = fManualResultY ? fManualResultYRange : fAutoResultY;
+  for(auto& layer : fDisplays) if(layer) { layer->SetMinimum(limits.first); layer->SetMaximum(limits.second); }
+  TVirtualPad::TContext context(ResultCanvas());
+  ResultCanvas()->Modified(); ResultCanvas()->Update();
+  return true;
+}
+
 // ============== ClearDrawings ==============
 // Purpose: Detach primitives before deleting owned display copies. Inputs: Owned drawings. Outputs: Empty pads.
 void Session::ClearDrawings() {
@@ -547,20 +661,24 @@ void Session::ClearDrawings() {
 // Inputs: Optional view reset. Outputs: Updated result and gate canvases.
 void Session::Render(bool resetView) {
   if(fClosed || !Alive(TotalCanvas()) || !Alive(ResultCanvas())) return;
-  if(!resetView) SyncView(false);
+  if(!resetView) { SyncView(false); SyncResultView(); }
+  else fManualResultY = false;
   const auto range = VisibleRange();
   const View gateView{true, range.first, range.second};
+  const std::pair<double, double> gateY = !resetView && fTotalDisplay ?
+    std::make_pair(fTotalDisplay->GetMinimumStored(), fTotalDisplay->GetMaximumStored()) : std::make_pair(-1111.0, -1111.0);
   View resultView;
   if(!resetView) for(const auto& display : fDisplays) if(display) { resultView = ReadView(display.get()); break; }
   ClearDrawings();
   TVirtualPad::TContext context(TotalCanvas());
   if(!fResult.total) return;
-  fTotalDisplay = Copy(*fResult.total);
+  fTotalDisplay = Copy(*fResult.total, RebinFactor(true));
   RestoreView(*fTotalDisplay, gateView);
+  fTotalDisplay->SetMinimum(gateY.first); fTotalDisplay->SetMaximum(gateY.second);
   fTotalDisplay->SetTitle((std::string("Gate axis: ") + ToString(fResult.config.gateAxis) + " - Total projection").c_str());
   fTotalDisplay->Draw("hist");
   if(fResult.estimatedBackground) {
-    fEstimateDisplay = Copy(*fResult.estimatedBackground);
+    fEstimateDisplay = Copy(*fResult.estimatedBackground, RebinFactor(true));
     fEstimateDisplay->SetLineColor(kGreen + 2); fEstimateDisplay->SetLineStyle(7); fEstimateDisplay->SetLineWidth(2);
     fEstimateDisplay->Draw("hist same");
   }
@@ -574,13 +692,9 @@ void Session::Render(bool resetView) {
     const bool shown[] = {fShowRaw, fShowBackground, fShowNet};
     const char* names[] = {"Raw gated", "Subtracted background", "Net gated"};
     const int colors[] = {kBlack, kGreen + 2, kBlue + 1};
-    double maximum = 0.0;
-    double minimum = 0.0;
     for(int layer = 0; layer < 3; ++layer) if(shown[layer] && sources[layer]) {
-      fDisplays[layer] = Copy(*sources[layer]);
+      fDisplays[layer] = Copy(*sources[layer], RebinFactor(false), layer ? &result.systematicShift : nullptr);
       RestoreView(*fDisplays[layer], resultView);
-      maximum = std::max(maximum, fDisplays[layer]->GetMaximum());
-      minimum = std::min(minimum, fDisplays[layer]->GetMinimum());
     }
     fLegend = std::make_unique<TLegend>(0.64, 0.74, 0.91, 0.89);
     fLegend->SetFillStyle(0); fLegend->SetBorderSize(0);
@@ -591,15 +705,12 @@ void Session::Render(bool resetView) {
       histogram.SetTitle("Gated result");
       histogram.SetLineColor(colors[layer]); histogram.SetLineWidth(2);
       if(layer == 1) histogram.SetLineStyle(7);
-      if(!ResultCanvas()->GetLogy()) {
-        histogram.SetMaximum(maximum > 0.0 ? maximum * 1.15 : 1.0);
-        histogram.SetMinimum(minimum < 0.0 ? minimum * 1.15 : 0.0);
-      }
       histogram.Draw(first ? "hist" : "hist same");
       first = false;
       fLegend->AddEntry(&histogram, names[layer], "l");
     }
     fLegend->Draw();
+    SyncResultView(true);
   } else {
     ResultCanvas()->DrawFrame(0, 0, 1, 1, "No signal gate;Result axis;Counts");
   }
@@ -692,15 +803,22 @@ void Session::Preview() {
 // Purpose: Apply gate gestures after ROOT input, preserving native drags on other objects.
 // Inputs: Canvas-local event and selected object. Outputs: Stable gate edits or Browse behavior.
 void Session::CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* selected) {
-  if(fClosed || canvas != TotalCanvas()) return;
-  if(event == kKeyPress) {
+  if(fClosed || (canvas != TotalCanvas() && canvas != ResultCanvas())) return;
+  if(event == kKeyPress || event == kArrowKeyPress) {
     const int key = py ? py : px;
+    if(key == kKey_Left) { Pan(canvas, -1); return; }
+    if(key == kKey_Right) { Pan(canvas, 1); return; }
+    if(key == kKey_o) { Unzoom(canvas); return; }
+    if(key == kKey_w) { Rebin(canvas, false); return; }
+    if(key == kKey_q) { Rebin(canvas, true); return; }
+    if(canvas != TotalCanvas()) return;
     if(key == kKey_Escape) { SetBrowse(true); return; }
     if(fBrowse) return;
     if(key == kKey_Delete) DeleteSelected();
     if((key == kKey_Return || key == kKey_Enter) && fWindow) fWindow->Submit(true);
     return;
   }
+  if(canvas == ResultCanvas()) { SyncResultView(); return; }
   if(!fGesture) SyncView();
   if(fBrowse || !fTotalDisplay) return;
   const int left = canvas->XtoAbsPixel(canvas->GetUxmin());

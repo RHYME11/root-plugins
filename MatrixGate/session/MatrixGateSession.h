@@ -42,6 +42,12 @@ public:
   void CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* selected);
   void Render(bool resetView = false);
   void Preview();
+  TH1D* Display(TCanvas* canvas) const;
+  void Pan(TCanvas* canvas, int direction);
+  void Unzoom(TCanvas* canvas);
+  void Rebin(TCanvas* canvas, bool undo);
+  int RebinFactor(bool total) const;
+  bool SyncResultView(bool force = false);
   void SetGesture(bool active);
   Gate* SelectedGate();
   const Gate* SelectedGate() const;
@@ -115,6 +121,12 @@ private:
   Config fConfig;
   std::array<Config, 2> fAxisConfigs;
   std::array<std::pair<double, double>, 2> fViews{};
+  std::array<std::array<int, 2>, 2> fRebinFactors{{{{1, 1}}, {{1, 1}}}};
+  std::pair<double, double> fObservedResultRange{0.0, 0.0};
+  std::pair<double, double> fAutoResultY{0.0, 0.0};
+  std::pair<double, double> fManualResultYRange{0.0, 1.0};
+  bool fManualResultY = false;
+  bool fObservedLogY = false;
   Result fResult;
   std::unique_ptr<Window> fWindow;
   std::string fStatus;

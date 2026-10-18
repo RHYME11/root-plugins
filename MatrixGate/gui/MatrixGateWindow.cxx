@@ -115,6 +115,7 @@ public:
   TGLabel* status = nullptr;
   TGLabel* actual = nullptr;
   TGLabel* curve = nullptr;
+  std::array<TGLabel*, 2> viewLabels{};
   MatrixGateReportView* report = nullptr;
   std::map<int, TGTextEntry*> entries;
   std::map<int, TGComboBox*> combos;
@@ -209,10 +210,19 @@ Window::Window(Session* session) : TGMainFrame(gClient->GetRoot(), 1320, 870), f
   fImpl->status->SetTextJustify(kTextLeft); fImpl->status->SetWrapLength(1250);
   AddFrame(fImpl->status, new TGLayoutHints(kLHintsExpandX, 10, 10, 2, 3));
   auto* canvases = new TGHorizontalFrame(this, 1300, 410, kFixedHeight);
-  fImpl->result = new TRootEmbeddedCanvas("MatrixGateResult", canvases, 640, 410);
-  fImpl->total = new TRootEmbeddedCanvas("MatrixGateTotal", canvases, 640, 410);
-  canvases->AddFrame(fImpl->total, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
-  canvases->AddFrame(fImpl->result, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
+  auto plot = [&](bool total) {
+    auto* column = new TGVerticalFrame(canvases, 640, 410);
+    canvases->AddFrame(column, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
+    auto* embedded = new TRootEmbeddedCanvas(total ? "MatrixGateTotal" : "MatrixGateResult", column, 640, 374);
+    column->AddFrame(embedded, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY));
+    auto* controls = row(column);
+    fImpl->viewLabels[total ? 0 : 1] = label(controls, total ? "Total | Rebin x1" : "Result | Rebin x1");
+    button(controls, "Rebin (w)", total ? kTotalRebin : kResultRebin);
+    button(controls, "Undo (q)", total ? kTotalUndo : kResultUndo);
+    label(controls, "Arrows: pan | o: unzoom | Shift+E: X range");
+    return embedded;
+  };
+  fImpl->total = plot(true); fImpl->result = plot(false);
   AddFrame(canvases, new TGLayoutHints(kLHintsExpandX, 4, 4, 0, 0));
   auto* resultRow = row(this);
   combo(resultRow, "Shown result", kResult, {}, 460);
@@ -477,6 +487,11 @@ Bool_t Window::ProcessMessage(Long_t message, Long_t first, Long_t second) {
     return kTRUE;
   }
   if(type != kC_COMMAND) return kTRUE;
+  if(first == kTotalRebin || first == kTotalUndo || first == kResultRebin || first == kResultUndo) {
+    const bool total = first == kTotalRebin || first == kTotalUndo;
+    session->Rebin(total ? TotalCanvas() : ResultCanvas(), first == kTotalUndo || first == kResultUndo);
+    return kTRUE;
+  }
   if(first == kExit) { CloseWindow(); return kTRUE; }
   if(first == kUpdate) { Submit(true); return kTRUE; }
   if(first == kAuto) { session->SetAuto(fImpl->checks.at(kAuto)->IsOn()); return kTRUE; }
@@ -521,6 +536,11 @@ void Window::Refresh(bool discardEdits) {
   fImpl->checks.at(kAuto)->SetOn(session->Auto(), false);
   fImpl->buttons.at(kPick)->SetState(session->Browse() ? kButtonUp : kButtonDown, false);
   fImpl->buttons.at(kBrowse)->SetState(session->Browse() ? kButtonDown : kButtonUp, false);
+  for(int index = 0; index < 2; ++index) {
+    const bool total = index == 0;
+    fImpl->viewLabels[index]->SetText(TString::Format("%s | Rebin x%d", total ? "Total" : "Result", session->RebinFactor(total)));
+    fImpl->buttons.at(total ? kTotalUndo : kResultUndo)->SetEnabled(session->RebinFactor(total) > 1);
+  }
   const auto reportText = std::string("Session: ") + (session->Current() ? "CURRENT" : "OUT OF DATE") +
     "\n" + session->Status() + (session->Current() ? "\n\nCurrent calculation:\n" : "\n\nLast successful calculation (historical):\n") +
     session->CurrentResult().Report();

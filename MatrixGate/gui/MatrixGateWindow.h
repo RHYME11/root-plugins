@@ -19,7 +19,8 @@ enum WidgetId {
   kModel, kTemplate, kFractionMethod, kFraction, kUncertainty, kErrors,
   kIntegral, kOverlap, kIterations, kOptions, kComptonGap, kSymmetric,
   kUseFitRange, kFitLow, kFitHigh, kUseNormRange, kNormLow, kNormHigh,
-  kAutomaticCurve, kGateUnder, kGateOver, kResultUnder, kResultOver
+  kAutomaticCurve, kGateUnder, kGateOver, kResultUnder, kResultOver,
+  kTotalRebin, kTotalUndo, kResultRebin, kResultUndo
 };
 
 class Window : public TGMainFrame {

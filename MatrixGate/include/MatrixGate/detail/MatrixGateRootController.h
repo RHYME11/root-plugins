@@ -3,9 +3,11 @@
 
 #include <memory>
 #include <TObject.h>
+#include <GuiTypes.h>
 #include <MatrixGate/MatrixGateConfig.h>
 
 class TH2;
+class TCanvas;
 
 namespace MatrixGate::Detail {
 
@@ -23,12 +25,14 @@ public:
   Session* Find(TH2* matrix);
   void Poll();
   void OnCanvasEvent(Int_t event, Int_t px, Int_t py, TObject* selected);
+  void OnGuiEvent(Event_t* event, Window_t window);
   void RecursiveRemove(TObject* object) override;
 
   ClassDefOverride(RootController, 0)
 
 private:
   RootController();
+  void HandleKey(Session* session, TCanvas* canvas, int key);
   class Impl;
   std::unique_ptr<Impl> fImpl; //! Transient sessions and synchronous timer.
 };
