@@ -1,5 +1,6 @@
 #include "MatrixGateSession.h"
 #include "MatrixGateWindow.h"
+#include "MatrixGatePhotoPeakBridge.h"
 #include "MatrixGateProjection.h"
 #include <MatrixGate/MatrixGateRoot.h>
 #include <MatrixGate/detail/MatrixGateRootController.h>
@@ -8,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <Buttons.h>
 #include <KeySymbols.h>
@@ -300,6 +302,7 @@ void Session::SetStatus(const std::string& status) {
 // ============== Changed ==============
 // Purpose: Mark the snapshot stale and schedule a bounded update. Inputs: Current settings. Outputs: Pending calculation.
 void Session::Changed() {
+  if(fFits) fFits->InvalidateGated("Gate or background settings changed.");
   fCurrent = false;
   fPending = fAuto;
   fDue = static_cast<unsigned long long>(gSystem->Now()) + 250;
@@ -339,6 +342,8 @@ bool Session::Configure(const Config& config) {
     }
     if(!std::isfinite(config.background.fraction) || config.background.fraction < 0 || config.background.fraction > 1)
       throw std::invalid_argument("Manual fraction requires 0 <= f <= 1.");
+    if(fFits && (config.flow.resultUnderflow != fConfig.flow.resultUnderflow || config.flow.resultOverflow != fConfig.flow.resultOverflow))
+      fFits->InvalidateAll("Projection flow-bin settings changed.");
     fConfig = config;
     Changed();
     return true;
@@ -396,6 +401,7 @@ void Session::Close(bool sourceDeleted) {
   if(fClosed) return;
   fClosed = true;
   fPending = false;
+  if(fFits) fFits->Close();
   if(sourceDeleted) fSource = nullptr;
   for(auto* canvas : {TotalCanvas(), ResultCanvas()})
     if(Alive(canvas)) canvas->Disconnect(nullptr, &RootController::Instance());
@@ -467,6 +473,7 @@ void Session::DeleteSelected() {
   };
   auto& gates = background ? fConfig.background.gates : fConfig.gates;
   if(!SelectedGate()) return;
+  if(fFits) fFits->Close(true);
   erase(fConfig);
   const auto range = VisibleRange();
   ConstrainGates(fConfig, range, range);
@@ -508,6 +515,7 @@ bool Session::SetBounds(double low, double high, bool preview) {
 // Inputs: New axis. Outputs: Recomputed total and restored per-axis gates.
 void Session::SwitchAxis(Axis axis) {
   if(axis == fConfig.gateAxis || fClosed) return;
+  if(fFits) fFits->Close();
   fAxisConfigs[fConfig.gateAxis == Axis::X ? 0 : 1] = fConfig;
   fConfig = fAxisConfigs[axis == Axis::X ? 0 : 1];
   fSelectedId = fConfig.gates.empty() ? 0 : fConfig.gates.front().id;
@@ -553,6 +561,56 @@ void Session::SetResultIndex(std::size_t index) { fResultIndex = index; Render()
 // ============== SetGesture ==============
 // Purpose: Suspend updates while native widgets hold a drag. Inputs: Active flag. Outputs: Gesture guard.
 void Session::SetGesture(bool active) { fGesture = active; if(!active) fDue = static_cast<unsigned long long>(gSystem->Now()) + 150; }
+
+// ============== Activate ==============
+// Purpose: Keep the red frame and shared tools aligned with the receiving canvas. Inputs: Canvas. Outputs: Selected plot.
+void Session::Activate(TCanvas* canvas) {
+  if(canvas != TotalCanvas() && canvas != ResultCanvas()) return;
+  const bool total = canvas == TotalCanvas();
+  if(total == fActiveTotal) return;
+  fActiveTotal = total;
+  if(fWindow) fWindow->RefreshActive();
+}
+
+// ============== ActiveCanvas ==============
+// Purpose: Resolve the shared toolbar target without consulting gPad. Inputs: None. Outputs: Owned canvas.
+TCanvas* Session::ActiveCanvas() const { return fActiveTotal ? TotalCanvas() : ResultCanvas(); }
+
+// ============== OpenPhotoPeak ==============
+// Purpose: Fit an independent current projection snapshot using the optional PhotoPeakFit component.
+// Inputs: Result layer (Raw/BG/Net); total target ignores layer. Outputs: Raised/refreshed native fitting window.
+bool Session::OpenPhotoPeak(int layer) {
+  if(fClosed || fGesture || !fWindow || !fWindow->Submit(false)) return false;
+  if(!fCurrent && !Refresh()) return false;
+  if(fResult.config.gateAxis != fConfig.gateAxis || !fResult.total) {
+    SetStatus("Update this axis before opening PhotoPeakFit."); return false;
+  }
+  if(!fFits) fFits = std::make_unique<PhotoPeakBridge>();
+  std::ostringstream key, title;
+  title << "MatrixGate: " << fSource->GetName() << " | ";
+  std::unique_ptr<TH1D> snapshot;
+  if(fActiveTotal) {
+    key << "total";
+    title << "Total " << ToString(fConfig.gateAxis);
+    snapshot = Copy(*fTotalDisplay);
+  } else {
+    if(layer < 0 || layer > 2 || fResultIndex >= fResult.projections.size()) {
+      SetStatus("Choose a current gated result before opening PhotoPeakFit."); return false;
+    }
+    const auto& projection = fResult.projections[fResultIndex];
+    const TH1D* sources[] = {projection.raw.get(), projection.subtracted.get(), projection.net.get()};
+    const char* names[] = {"Raw", "Scaled BG", "Net"};
+    key << "gated:" << layer << ':' << static_cast<int>(fResult.config.combination);
+    title << names[layer] << " | " << ToString(fResult.config.combination);
+    for(const auto& gate : projection.gates) { key << ':' << gate.requested.id; title << " | " << gate.requested.name; }
+    snapshot = Copy(*sources[layer], RebinFactor(false), layer ? &projection.systematicShift : nullptr);
+    RestoreView(*snapshot, ReadView(Display(ResultCanvas())));
+  }
+  std::string error;
+  if(!fFits->Open(key.str(), title.str(), fActiveTotal, *snapshot, error)) { SetStatus(error); return false; }
+  SetStatus("PhotoPeakFit opened for " + title.str() + ". Select peaks in its separate canvas, then press f to fit.");
+  return true;
+}
 
 // ============== Display ==============
 // Purpose: Resolve the plotted histogram without using global pad focus. Inputs: Owned canvas. Outputs: Display clone.
@@ -605,6 +663,7 @@ void Session::Rebin(TCanvas* canvas, bool undo) {
   auto& factor = fRebinFactors[fConfig.gateAxis == Axis::X ? 0 : 1][canvas == TotalCanvas() ? 0 : 1];
   if(undo) { if(factor == 1) return; factor /= 2; }
   else { if(display->GetNbinsX() < 2) return; factor *= 2; }
+  if(fFits && canvas == ResultCanvas()) fFits->InvalidateGated("Result display binning changed.");
   Render();
 }
 
@@ -714,6 +773,7 @@ void Session::Render(bool resetView) {
   } else {
     ResultCanvas()->DrawFrame(0, 0, 1, 1, "No signal gate;Result axis;Counts");
   }
+  if(fFits) fFits->CheckTotal(*fTotalDisplay);
   RepaintStatus();
   ResultCanvas()->Modified(); ResultCanvas()->Update();
   if(fWindow) fWindow->Refresh();

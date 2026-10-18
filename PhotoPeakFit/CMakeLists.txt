@@ -21,6 +21,7 @@ add_library(PhotoPeakFit SHARED
   gui/PhotoPeakParameterRow.cxx
   gui/PhotoPeakResultView.cxx
   root/PhotoPeakRoot.cxx
+  root/PhotoPeakBridge.cxx
 )
 target_compile_features(PhotoPeakFit PUBLIC cxx_std_17)
 target_include_directories(PhotoPeakFit PUBLIC

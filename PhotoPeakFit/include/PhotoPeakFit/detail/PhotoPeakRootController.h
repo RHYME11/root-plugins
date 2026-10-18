@@ -14,6 +14,8 @@ public:
   ~PhotoPeakRootController() override;
   bool Start(TH1* histogram, TVirtualPad* pad);
   bool Clean(TVirtualPad* pad);
+  bool RefreshSnapshot(TH1* target, const TH1* snapshot, TVirtualPad* pad);
+  bool InvalidateSource(TVirtualPad* pad, const char* message);
   bool Stop(TVirtualPad* pad);
   void StopAll();
   const char* LastError() const;

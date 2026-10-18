@@ -16,6 +16,7 @@ add_library(MatrixGate SHARED
   session/MatrixGateSession.cxx
   gui/MatrixGateWindow.cxx
   gui/MatrixGateReportView.cxx
+  connectors/photopeakfit/MatrixGatePhotoPeakBridge.cxx
   root/MatrixGateRoot.cxx
   root/MatrixGateRootController.cxx
 )
@@ -23,10 +24,10 @@ target_compile_features(MatrixGate PUBLIC cxx_std_17)
 target_include_directories(MatrixGate PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
-  PRIVATE common session gui
+  PRIVATE common session gui connectors/photopeakfit
 )
 target_link_libraries(MatrixGate PUBLIC ROOT::Core ROOT::RIO ROOT::Hist
-  ROOT::Matrix ROOT::MathCore ROOT::Spectrum ROOT::Minuit2 ROOT::Graf ROOT::Gpad ROOT::Gui)
+  ROOT::Matrix ROOT::MathCore ROOT::Spectrum ROOT::Minuit2 ROOT::Graf ROOT::Gpad ROOT::Gui PRIVATE ${CMAKE_DL_LIBS})
 set_target_properties(MatrixGate PROPERTIES
   CXX_EXTENSIONS OFF
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"

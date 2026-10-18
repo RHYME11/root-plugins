@@ -20,7 +20,7 @@ enum WidgetId {
   kIntegral, kOverlap, kIterations, kOptions, kComptonGap, kSymmetric,
   kUseFitRange, kFitLow, kFitHigh, kUseNormRange, kNormLow, kNormHigh,
   kAutomaticCurve, kGateUnder, kGateOver, kResultUnder, kResultOver,
-  kTotalRebin, kTotalUndo, kResultRebin, kResultUndo
+  kActivePlot, kRebin, kUndo, kPhotoPeakFit, kFitLayer
 };
 
 class Window : public TGMainFrame {
@@ -38,6 +38,8 @@ public:
   TCanvas* ResultCanvas() const;
   void ForgetGate(Axis axis, bool background, std::uint64_t id);
   void CollectRows(bool all = false);
+  void RefreshActive();
+  int FitLayer() const;
 
 private:
   class Impl;

@@ -33,6 +33,8 @@ class PhotoPeakSession {
     void Pan(int direction);
     void Unzoom();
     void RefreshView();
+    bool RefreshSnapshot(const TH1& snapshot);
+    void InvalidateSource(const std::string& message);
     void ShowBackground();
     void SetStatus(const std::string& message);
 

@@ -20,6 +20,7 @@
 #include <TColor.h>
 #include <TSystem.h>
 #include <TROOT.h>
+#include <TVirtualX.h>
 #include <TGTab.h>
 #include <TGTextEntry.h>
 #include <TGClient.h>
@@ -115,7 +116,8 @@ public:
   TGLabel* status = nullptr;
   TGLabel* actual = nullptr;
   TGLabel* curve = nullptr;
-  std::array<TGLabel*, 2> viewLabels{};
+  std::array<TGVerticalFrame*, 2> plotFrames{};
+  TGLabel* activeLabel = nullptr;
   MatrixGateReportView* report = nullptr;
   std::map<int, TGTextEntry*> entries;
   std::map<int, TGComboBox*> combos;
@@ -209,21 +211,25 @@ Window::Window(Session* session) : TGMainFrame(gClient->GetRoot(), 1320, 870), f
   fImpl->status = new TGLabel(this, "Ready");
   fImpl->status->SetTextJustify(kTextLeft); fImpl->status->SetWrapLength(1250);
   AddFrame(fImpl->status, new TGLayoutHints(kLHintsExpandX, 10, 10, 2, 3));
-  auto* canvases = new TGHorizontalFrame(this, 1300, 410, kFixedHeight);
+  auto* canvases = new TGHorizontalFrame(this, 1300, 382, kFixedHeight);
   auto plot = [&](bool total) {
-    auto* column = new TGVerticalFrame(canvases, 640, 410);
-    canvases->AddFrame(column, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
-    auto* embedded = new TRootEmbeddedCanvas(total ? "MatrixGateTotal" : "MatrixGateResult", column, 640, 374);
-    column->AddFrame(embedded, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY));
-    auto* controls = row(column);
-    fImpl->viewLabels[total ? 0 : 1] = label(controls, total ? "Total | Rebin x1" : "Result | Rebin x1");
-    button(controls, "Rebin (w)", total ? kTotalRebin : kResultRebin);
-    button(controls, "Undo (q)", total ? kTotalUndo : kResultUndo);
-    label(controls, "Arrows: pan | o: unzoom | Shift+E: X range");
+    auto* frame = new TGVerticalFrame(canvases, 640, 382);
+    fImpl->plotFrames[total ? 0 : 1] = frame;
+    canvases->AddFrame(frame, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
+    auto* embedded = new TRootEmbeddedCanvas(total ? "MatrixGateTotal" : "MatrixGateResult", frame, 634, 376);
+    frame->AddFrame(embedded, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 3, 3, 3, 3));
     return embedded;
   };
   fImpl->total = plot(true); fImpl->result = plot(false);
   AddFrame(canvases, new TGLayoutHints(kLHintsExpandX, 4, 4, 0, 0));
+  auto* controls = row(this);
+  combo(controls, "Active plot", kActivePlot, {{0, "Total (left)"}, {1, "Result (right)"}}, 115);
+  fImpl->activeLabel = label(controls, "Rebin x1");
+  button(controls, "Rebin (w)", kRebin); button(controls, "Undo (q)", kUndo);
+  button(controls, "PhotoPeakFit (f)", kPhotoPeakFit);
+  combo(controls, "Fit layer", kFitLayer, {{0, "Raw"}, {1, "Scaled BG"}, {2, "Net"}}, 100)->Select(2, false);
+  label(controls, "Arrows: pan | o: unzoom | Shift+E: X range");
+  fImpl->buttons.at(kPhotoPeakFit)->SetToolTipText("Open a separate PhotoPeakFit snapshot for the red-framed plot. Result fits use the explicitly selected layer.");
   auto* resultRow = row(this);
   combo(resultRow, "Shown result", kResult, {}, 460);
   label(resultRow, "Gate colors match rows | Pick mode: double-click LEFT plot to move selected center (same width)");
@@ -487,11 +493,15 @@ Bool_t Window::ProcessMessage(Long_t message, Long_t first, Long_t second) {
     return kTRUE;
   }
   if(type != kC_COMMAND) return kTRUE;
-  if(first == kTotalRebin || first == kTotalUndo || first == kResultRebin || first == kResultUndo) {
-    const bool total = first == kTotalRebin || first == kTotalUndo;
-    session->Rebin(total ? TotalCanvas() : ResultCanvas(), first == kTotalUndo || first == kResultUndo);
+  if(first == kActivePlot && action == kCM_COMBOBOX) {
+    auto* canvas = second == 0 ? TotalCanvas() : ResultCanvas();
+    session->Activate(canvas);
+    if(canvas->GetCanvasID() >= 0) gVirtualX->SetInputFocus(gVirtualX->GetWindowID(canvas->GetCanvasID()));
     return kTRUE;
   }
+  if(first == kRebin || first == kUndo) { session->Rebin(session->ActiveCanvas(), first == kUndo); return kTRUE; }
+  if(first == kPhotoPeakFit) { session->OpenPhotoPeak(FitLayer()); return kTRUE; }
+  if(first == kFitLayer) return kTRUE;
   if(first == kExit) { CloseWindow(); return kTRUE; }
   if(first == kUpdate) { Submit(true); return kTRUE; }
   if(first == kAuto) { session->SetAuto(fImpl->checks.at(kAuto)->IsOn()); return kTRUE; }
@@ -524,6 +534,28 @@ Bool_t Window::ProcessMessage(Long_t message, Long_t first, Long_t second) {
   return kTRUE;
 }
 
+// ============== FitLayer ==============
+// Purpose: Read the explicit gated fitting target. Inputs: None. Outputs: Raw/BG/Net index.
+int Window::FitLayer() const { return fImpl->combos.at(kFitLayer)->GetSelected(); }
+
+// ============== RefreshActive ==============
+// Purpose: Paint the selected native canvas frame and shared toolbar without touching gate drafts.
+// Inputs: Session selection. Outputs: Red frame, target selector, and active rebin factor.
+void Window::RefreshActive() {
+  auto* session = fImpl->session;
+  if(!session) return;
+  const bool total = session->ActiveTotal();
+  fImpl->combos.at(kActivePlot)->Select(total ? 0 : 1, false);
+  fImpl->activeLabel->SetText(TString::Format("Rebin x%d", session->RebinFactor(total)));
+  fImpl->buttons.at(kUndo)->SetEnabled(session->RebinFactor(total) > 1);
+  fImpl->combos.at(kFitLayer)->SetEnabled(!total);
+  for(int index = 0; index < 2; ++index) {
+    auto* frame = fImpl->plotFrames[index];
+    frame->SetBackgroundColor(index == (total ? 0 : 1) ? TColor::Number2Pixel(kRed + 1) : GetDefaultFrameBackground());
+    gClient->NeedRedraw(frame);
+  }
+}
+
 // ============== Refresh ==============
 // Purpose: Paint authoritative state without replacing incomplete text.
 // Inputs: Optional draft discard. Outputs: Synchronized controls, actual bins, and report.
@@ -536,11 +568,7 @@ void Window::Refresh(bool discardEdits) {
   fImpl->checks.at(kAuto)->SetOn(session->Auto(), false);
   fImpl->buttons.at(kPick)->SetState(session->Browse() ? kButtonUp : kButtonDown, false);
   fImpl->buttons.at(kBrowse)->SetState(session->Browse() ? kButtonDown : kButtonUp, false);
-  for(int index = 0; index < 2; ++index) {
-    const bool total = index == 0;
-    fImpl->viewLabels[index]->SetText(TString::Format("%s | Rebin x%d", total ? "Total" : "Result", session->RebinFactor(total)));
-    fImpl->buttons.at(total ? kTotalUndo : kResultUndo)->SetEnabled(session->RebinFactor(total) > 1);
-  }
+  RefreshActive();
   const auto reportText = std::string("Session: ") + (session->Current() ? "CURRENT" : "OUT OF DATE") +
     "\n" + session->Status() + (session->Current() ? "\n\nCurrent calculation:\n" : "\n\nLast successful calculation (historical):\n") +
     session->CurrentResult().Report();

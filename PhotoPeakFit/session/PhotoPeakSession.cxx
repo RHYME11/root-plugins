@@ -8,6 +8,7 @@
 #include <Buttons.h>
 #include <KeySymbols.h>
 #include <TCanvas.h>
+#include <TDirectory.h>
 #include <TH1.h>
 #include <TList.h>
 #include <TROOT.h>
@@ -264,7 +265,7 @@ bool PhotoPeakSession::CommitPending() {
 // Purpose: Report an operation outcome in the control window.
 // Inputs: English message. Outputs: Updated status.
 void PhotoPeakSession::SetStatus(const std::string& message) {
-  fState.status = message;
+  fState.status = fState.sourceOutOfDate ? "SOURCE OUT OF DATE: " + fState.sourceMessage + " " + message : message;
   RefreshGui();
 }
 
@@ -327,6 +328,9 @@ bool PhotoPeakSession::ValidateRequest(const PhotoPeakFitRequest& request) {
 // Purpose: Fit a validated snapshot and retain results without replacing seeds.
 // Inputs: Committed user settings. Outputs: Result, input snapshot and drawings.
 void PhotoPeakSession::Fit() {
+  if(fState.sourceOutOfDate) {
+    SetStatus("Reopen PhotoPeakFit from MatrixGate to refresh this spectrum snapshot."); return;
+  }
   if(!ValidateTarget() || !CommitPending() || !ValidateRequest(fState.request))
     return;
   if(fState.request.peaks.empty()) {
@@ -395,7 +399,8 @@ void PhotoPeakSession::Clean() {
   fState.request.fitHigh = axis->GetBinUpEdge(axis->GetLast());
   fRangeClicks = 0;
   CancelDrag();
-  fState.status = "Selections and results cleared. Fit settings and binning retained.";
+  fState.status = (fState.sourceOutOfDate ? "SOURCE OUT OF DATE: " + fState.sourceMessage + " " : "") +
+    "Selections and results cleared. Fit settings and binning retained.";
   if(fWindow)
     fWindow->Refresh(true);
   fPad->Modified();
@@ -646,6 +651,47 @@ void PhotoPeakSession::RefreshView() {
     return;
   RefreshMarkers();
   RefreshGui();
+}
+
+// ============== PhotoPeakSession::InvalidateSource ==============
+// Purpose: Mark an externally supplied spectrum snapshot obsolete without changing its counts or seeds.
+// Inputs: Source diagnostic. Outputs: Retained historical result and blocked fitting until explicit refresh.
+void PhotoPeakSession::InvalidateSource(const std::string& message) {
+  if(!ValidateTarget()) return;
+  if(!fState.sourceOutOfDate) {
+    if(fState.fitting) ++fState.revision;
+    else Changed();
+  }
+  fState.sourceOutOfDate = true; fState.sourceMessage = message;
+  SetStatus("Refresh the spectrum snapshot from its source.");
+}
+
+// ============== PhotoPeakSession::RefreshSnapshot ==============
+// Purpose: Replace an external snapshot explicitly while retaining valid seeds, range, and model choices.
+// Inputs: Same-type one-dimensional spectrum. Outputs: Updated owned baseline, stale previous fit, and refreshed view.
+bool PhotoPeakSession::RefreshSnapshot(const TH1& snapshot) {
+  if(!ValidateTarget() || fState.fitting || snapshot.GetDimension() != 1 || snapshot.IsA() != fHistogram->IsA() || !CommitPending()) return false;
+  TVirtualPad::TContext context(fPad);
+  TDirectory::TContext directory(nullptr);
+  CancelDrag(); Changed(); fMarkers->Clear(); RemovePhotoPeakBackground(fPad, fHistogram);
+  const std::string name = fHistogram->GetName();
+  snapshot.Copy(*fHistogram); fHistogram->SetName(name.c_str()); fHistogram->SetDirectory(nullptr);
+  fHistogram->ResetBit(TObject::kCanDelete); fHistogram->SetBit(TObject::kMustCleanup);
+  fOriginalHistogram.reset(static_cast<TH1*>(fHistogram->Clone((name + "_photopeak_original").c_str())));
+  fOriginalHistogram->SetDirectory(nullptr);
+  while(fState.rebinFactor > fHistogram->GetNbinsX()) fState.rebinFactor /= 2;
+  if(fState.rebinFactor > 1) fHistogram->Rebin(fState.rebinFactor);
+  const auto* axis = fHistogram->GetXaxis();
+  fState.request.fitLow = std::max(axis->GetXmin(), fState.request.fitLow);
+  fState.request.fitHigh = std::min(axis->GetXmax(), fState.request.fitHigh);
+  if(fState.request.fitLow >= fState.request.fitHigh) {
+    fState.request.fitLow = axis->GetXmin(); fState.request.fitHigh = axis->GetXmax();
+  }
+  fState.sourceOutOfDate = false; fState.sourceMessage.clear();
+  RefreshMarkers();
+  SetStatus("Spectrum snapshot refreshed. Peak seeds and fit settings retained; choose Fit to update results.");
+  fPad->Modified(); fPad->Update(); RaiseWindow();
+  return true;
 }
 
 // ============== PhotoPeakSession::ShowBackground ==============

@@ -16,6 +16,8 @@ struct PhotoPeakSessionState {
   bool rangeVisible = false;
   bool hasResult = false;
   bool fitting = false;
+  bool sourceOutOfDate = false;
+  std::string sourceMessage;
   int fittedRebinFactor = 1;
   PhotoPeakFitRequest fittedRequest;
   PhotoPeakFitResult result;

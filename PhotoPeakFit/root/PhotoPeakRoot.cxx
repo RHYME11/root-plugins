@@ -12,6 +12,7 @@
 #include <Buttons.h>
 #include <KeySymbols.h>
 #include <TCanvas.h>
+#include <TDirectory.h>
 #include <TAxis.h>
 #include <TClass.h>
 #include <TContextMenu.h>
@@ -208,6 +209,37 @@ bool PhotoPeakRootController::Clean(TVirtualPad* pad) {
   }
   session->Clean();
   return true;
+}
+
+// ============== PhotoPeakRootController::RefreshSnapshot ==============
+// Purpose: Refresh a caller-owned snapshot or restart its closed fit session. Inputs: Target/new data/pad. Outputs: Status.
+bool PhotoPeakRootController::RefreshSnapshot(TH1* target, const TH1* snapshot, TVirtualPad* pad) {
+  fImpl->error.clear();
+  if(!target || !snapshot || snapshot->GetDimension() != 1 || target->IsA() != snapshot->IsA() || !pad) {
+    fImpl->error = "Snapshot refresh requires matching one-dimensional histograms and a live pad."; return false;
+  }
+  if(auto* session = fImpl->Find(pad)) {
+    if(session->Histogram() != target || !session->RefreshSnapshot(*snapshot)) {
+      fImpl->error = "Snapshot refresh failed; finish invalid PhotoPeakFit edits or close its current dialog first."; return false;
+    }
+    return true;
+  }
+  TVirtualPad::TContext context(pad);
+  TDirectory::TContext directory(nullptr);
+  const std::string name = target->GetName();
+  snapshot->Copy(*target); target->SetName(name.c_str()); target->SetDirectory(nullptr);
+  target->ResetBit(TObject::kCanDelete);
+  if(!pad->GetListOfPrimitives()->FindObject(target)) target->Draw("hist");
+  pad->Modified(); pad->Update();
+  return Start(target, pad);
+}
+
+// ============== PhotoPeakRootController::InvalidateSource ==============
+// Purpose: Notify only the fit using one external snapshot. Inputs: Pad/diagnostic. Outputs: Updated validity.
+bool PhotoPeakRootController::InvalidateSource(TVirtualPad* pad, const char* message) {
+  auto* session = fImpl->Find(pad);
+  if(!session) return false;
+  session->InvalidateSource(message ? message : "Source data changed."); return true;
 }
 
 // ============== PhotoPeakRootController::Stop ==============

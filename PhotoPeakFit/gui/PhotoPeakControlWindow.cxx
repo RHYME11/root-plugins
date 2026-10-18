@@ -500,8 +500,8 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
     const bool active = static_cast<int>(state.interaction) == index;
     fImpl->tools[index]->SetState(active ? kButtonDown : kButtonUp, false);
   }
-  const bool current = state.hasResult && state.resultRevision == state.revision && !fImpl->dirty;
-  fImpl->resultStatus->SetText(!state.hasResult ? "Not fitted" : !current ?
+  const bool current = state.hasResult && !state.sourceOutOfDate && state.resultRevision == state.revision && !fImpl->dirty;
+  fImpl->resultStatus->SetText(state.sourceOutOfDate ? "Source snapshot OUT OF DATE. Refresh from MatrixGate." : !state.hasResult ? "Not fitted" : !current ?
     "Previous result: input changed or has unapplied edits. Refit required." :
     state.result.status == 0 ? "Result matches the current input." : "Fit failed or did not converge.");
   std::ostringstream output;

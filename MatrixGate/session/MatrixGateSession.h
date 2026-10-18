@@ -18,6 +18,7 @@ class TPaveText;
 namespace MatrixGate::Detail {
 
 class Window;
+class PhotoPeakBridge;
 
 class Session {
 public:
@@ -41,6 +42,12 @@ public:
   void SetResultIndex(std::size_t index);
   void CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* selected);
   void Render(bool resetView = false);
+  void Activate(TCanvas* canvas);
+  TCanvas* ActiveCanvas() const;
+  bool OpenPhotoPeak(int layer);
+  // ============== ActiveTotal ==============
+  // Purpose: Read the shared toolbar target. Inputs: None. Outputs: Total/result selector.
+  bool ActiveTotal() const { return fActiveTotal; }
   void Preview();
   TH1D* Display(TCanvas* canvas) const;
   void Pan(TCanvas* canvas, int direction);
@@ -129,6 +136,8 @@ private:
   bool fObservedLogY = false;
   Result fResult;
   std::unique_ptr<Window> fWindow;
+  std::unique_ptr<PhotoPeakBridge> fFits;
+  bool fActiveTotal = true;
   std::string fStatus;
   std::uint64_t fNextId = 1;
   std::uint64_t fSelectedId = 0;

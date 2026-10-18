@@ -268,9 +268,14 @@ canvas keystrokes do not operate MatrixGate plots. The shortcuts also work in Br
 | `w` | Rebin that plot's display by another factor of two |
 | `q` | Undo one rebin step on that plot |
 | Shift+E | Open ROOT's native X-axis `SetRangeUser` dialog for that plot |
+| `f` | Open PhotoPeakFit for that plot in a separate fitting canvas |
 
-Each plot also has its own Rebin and Undo buttons and factor label. Display
-binning is independent for the two plots and for each gate-axis direction,
+One shared toolbar contains Rebin, Undo, the current factor, and PhotoPeakFit.
+The red frame and `Active plot` selector identify its target. Moving into or
+using either canvas updates the target; the selector can also choose it explicitly.
+Keyboard events still operate only the canvas receiving the native event, so
+typing in an editor or using an unrelated canvas cannot operate the red-framed plot.
+Display binning is independent for the two plots and for each gate-axis direction,
 and survives recalculation. Rebin rebuilds from the immutable original spectra,
 retains a final incomplete group, sums counts and statistical variances, and
 preserves the common subtraction-scale covariance in BG/net errors. Undo
@@ -278,6 +283,32 @@ restores the finer display without altering the source TH2, calculation spectra,
 or source-bin gate selection. Result overlays share a Y scale computed from
 the currently visible X interval, including negative counts. Explicit native Y
 limits are retained until unzoomed with `o` or ROOT's axis controls.
+
+For fitting, select Total or Result and click `PhotoPeakFit (f)` (or press `f`
+over that canvas). For Result, `Fit layer` explicitly selects Raw, Scaled BG,
+or Net, independently of the visible overlay checkboxes and for the currently
+shown gate result. Total always fits the total projection. PhotoPeakFit is
+loaded on demand from beside MatrixGate or ROOT's dynamic library search path;
+build both plugins together with `make`. MatrixGate calculations and gating
+remain usable when this optional component is absent.
+
+The fitting canvas owns a detached snapshot at the current display binning and
+initial visible X range. Use the existing PhotoPeakFit controls: left-click one
+or more peaks, Shift-click range edges, then press `f` inside the **fitting
+canvas** or click Fit. Its peak selection, range, model, results, and additional
+rebinning are independent of MatrixGate and other fit windows. Fits consume the
+snapshot's per-bin errors; the fitter does not use MatrixGate's full cross-bin
+covariance matrix.
+
+Gate/background edits mark gated fit snapshots `OUT OF DATE` without changing
+their old counts or peak seeds. Total fits stay current across gate edits;
+changed total data/errors/binning invalidate them. Fitting a stale snapshot is
+blocked. Reopen PhotoPeakFit from the corresponding MatrixGate target to refresh
+the snapshot, retain valid seeds/settings, and refit explicitly. Separate gates
+and result layers can have independent fit windows. Deleting a gate purges gated
+fit windows; switching the gate axis purges all of this session's fit windows.
+Closing MatrixGate or deleting its TH2 also closes its fitting canvases and
+controls, while unrelated PhotoPeakFit sessions continue running.
 
 The `Gates` tab provides one scrollable slider row per gate, with a matching
 stable color, an enabled flag, and a Delete button. Select a row to edit its
@@ -427,8 +458,9 @@ its spectra; destroy it or move it to transfer ownership. A failure returns
 
 Every projection also owns `subtracted` and `net` spectra, statistical-variance
 and scale-uncertainty components. With `background.model=None`, `subtracted` is
-zero and `net` equals `raw`. MatrixGate does not link to PhotoPeakFit or GRSISort;
-export and the optional PhotoPeakFit connector remain later stages.
+zero and `net` equals `raw`. MatrixGate has no link-time dependency on PhotoPeakFit
+or GRSISort; its optional native fitting connector loads PhotoPeakFit at runtime.
+Export remains a later stage.
 
 ### Template background subtraction
 
@@ -602,8 +634,9 @@ Reference baselines:
 The calculation lives in `MatrixGate/common/`, the public types in
 `MatrixGate/include/MatrixGate/`, and the ROOT entry, dictionary, and loader in
 `MatrixGate/root/`. Independent session state and native controls live in
-`MatrixGate/session/` and `MatrixGate/gui/`. Export and the optional PhotoPeakFit
-connector will build on these layers.
+`MatrixGate/session/` and `MatrixGate/gui/`. The optional snapshot connector lives
+in `MatrixGate/connectors/photopeakfit/`; PhotoPeakFit exposes its versioned C
+bridge in `PhotoPeakFit/PhotoPeakBridge.h`. Export remains a later stage.
 
 ## Code structure
 
@@ -696,3 +729,9 @@ proportional zoom mapping, relative-window limits, model switching, multiple
 sources, complete gate deletion, native widget reclamation, file/source deletion,
 and repeated window cleanup. `--demo`
 also saves native Gates/Background/Report screenshots in `tests/matrixgate-tmp/`.
+
+`tests/matrixgate-build/matrixgate-tests/matrixgate_fit_tests` runs the native
+PhotoPeakFit connector checks without linking PhotoPeakFit into the test program:
+lazy loading, single/multiple peak fits, exact layer snapshots, stale-source
+blocking, explicit refresh with retained seeds and fitter binning, per-window
+key isolation, gate/source deletion, axis changes, and independent session cleanup.
