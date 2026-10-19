@@ -37,7 +37,6 @@ namespace {
 enum ControlId {
   kLayer = 800,
   kCopyPrevious,
-  kUndoCopy,
   kFit = 100,
   kClean,
   kExitMode,
@@ -175,10 +174,8 @@ public:
   };
   std::map<PhotoPeakSession*, Draft> drafts;
   PhotoPeakSession* previous = nullptr;
-  std::map<PhotoPeakSession*, Draft> undoDrafts;
   TGLabel* copySource = nullptr;
   TGTextButton* copyButton = nullptr;
-  TGTextButton* undoButton = nullptr;
   TGComboBox* layer = nullptr;
   PhotoPeakSession* session = nullptr;
   TGLabel* target = nullptr;
@@ -252,7 +249,6 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   AddFrame(fImpl->copySource, new TGLayoutHints(kLHintsExpandX, 8, 8, 2, 2));
   auto* copying = new TGHorizontalFrame(this);
   fImpl->copyButton = addButton(copying, "Overwrite from previous target", kCopyPrevious);
-  fImpl->undoButton = addButton(copying, "Undo overwrite", kUndoCopy);
   AddFrame(copying, new TGLayoutHints(kLHintsExpandX, 5, 5));
   auto* tools = new TGHorizontalFrame(this);
   fImpl->tools[0] = addButton(tools, "Pick peaks", kPickPeaks);
@@ -464,10 +460,6 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
   if(parameter1 == kCopyPrevious) {
     auto* current = fImpl->session;
     auto* previous = fImpl->previous;
-    Bind(nullptr);
-    fImpl->undoDrafts[current] = fImpl->drafts[current];
-    Bind(current);
-    fImpl->previous = previous;
     if(PhotoPeakRootController::Instance().CopyPrevious() && previous) {
       const auto source = fImpl->drafts.find(previous);
       if(source != fImpl->drafts.end()) {
@@ -476,19 +468,6 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
         fImpl->drafts[current] = std::move(copied);
         Bind(current);
         fImpl->previous = previous;
-      }
-    }
-    return kTRUE;
-  }
-  if(parameter1 == kUndoCopy) {
-    auto* current = fImpl->session;
-    if(current->UndoCopy()) {
-      const auto found = fImpl->undoDrafts.find(current);
-      if(found != fImpl->undoDrafts.end()) {
-        fImpl->session = nullptr;
-        fImpl->drafts[current] = found->second;
-        Bind(current);
-        fImpl->undoDrafts.erase(found);
       }
     }
     return kTRUE;
@@ -578,7 +557,6 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
   }
   auto* previous = fImpl->previous;
   fImpl->copyButton->SetEnabled(previous && !previous->IsClosed());
-  fImpl->undoButton->SetEnabled(fImpl->session->CanUndoCopy());
   fImpl->copySource->SetText(previous && !previous->IsClosed() ?
     TString::Format("Copy source: %s / %s / %s", previous->Canvas()->GetName(), previous->Pad()->GetName(), previous->Histogram()->GetName()).Data() : "Copy source: none");
   fImpl->status->SetText(state.status.c_str());

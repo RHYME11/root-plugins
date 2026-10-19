@@ -7,6 +7,8 @@
 #include "PhotoPeakTarget.h"
 
 #include <algorithm>
+#include <functional>
+#include <cmath>
 #include <set>
 #include <map>
 #include <string>
@@ -53,6 +55,20 @@ bool IsPlotObject(TObject* selected, TH1* histogram) {
   return selected && (selected == histogram || dynamic_cast<TFrame*>(selected) ||
     selected->GetUniqueID() == kPhotoPeakMarkerObject);
 }
+
+// ============== CanvasRangeAxis ==============
+// Purpose: Keep the native range dialog while applying OK/Apply to the whole canvas.
+// Inputs: Source axis and range action. Outputs: Axis proxy; Cancel makes no changes.
+class CanvasRangeAxis : public TAxis {
+public:
+  CanvasRangeAxis(const TAxis& axis, std::function<void(double, double)> apply)
+    : TAxis(axis), fApply(std::move(apply)) {}
+  // ============== SetRangeUser ==============
+  // Purpose: Forward native dialog acceptance. Inputs: Bounds. Outputs: Canvas views.
+  void SetRangeUser(Double_t low, Double_t high) override { fApply(low, high); }
+private:
+  std::function<void(double, double)> fApply;
+};
 
 class SessionTimer : public TTimer {
 public:
@@ -370,12 +386,20 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
     auto* menu = canvas->GetContextMenu();
     menu->SetCanvas(canvas);
     menu->SetPad(pad);
-    menu->SetObject(session->Histogram()->GetXaxis());
-    menu->Action(session->Histogram()->GetXaxis(), TAxis::Class()->GetMethodAny("SetRangeUser"));
+    CanvasRangeAxis axis(*session->Histogram()->GetXaxis(),
+      [this, canvas](double low, double high) { ApplyCanvasRange(canvas, low, high); });
+    menu->SetObject(&axis);
+    menu->Action(&axis, TAxis::Class()->GetMethodAny("SetRangeUser"));
     // The dialog processes events; reacquire the session after it closes.
     session = fImpl->Find(pad);
-    if(session && CanvasAlive(canvas))
-      session->RefreshView();
+    const bool live = session && session->ValidateTarget();
+    if(CanvasAlive(canvas)) {
+      auto* target = live ? session->Histogram()->GetXaxis() : nullptr;
+      menu->SetObject(target);
+      menu->SetCalledObject(target);
+    }
+    gROOT->SetSelectedPrimitive(live ? session->Histogram() : nullptr);
+    if(live) session->RefreshView();
     return;
   }
   session->HandleEvent(input);
@@ -608,4 +632,24 @@ void PhotoPeakRootController::ParkEditor(PhotoPeakSession* session) {
 // Purpose: Inspect the current fit layer. Inputs: None. Outputs: Live session or null.
 PhotoPeakSession* PhotoPeakRootController::ActiveSession() const {
   return fImpl->active && !fImpl->active->IsClosed() ? fImpl->active : nullptr;
+}
+
+// ============== PhotoPeakRootController::ApplyCanvasRange ==============
+// Purpose: Apply PhotoPeakFit's accepted X range to every histogram in this canvas.
+// Inputs: Canvas and finite increasing bounds. Outputs: Updated nested pads and layers.
+void PhotoPeakRootController::ApplyCanvasRange(TCanvas* canvas, double low, double high) {
+  if(!CanvasAlive(canvas) || !std::isfinite(low) || !std::isfinite(high) || low >= high) return;
+  std::function<void(TVirtualPad*)> apply = [&](TVirtualPad* pad) {
+    TIter next(pad->GetListOfPrimitives());
+    while(auto* object = next()) {
+      if(auto* child = dynamic_cast<TVirtualPad*>(object)) apply(child);
+      else if(auto* histogram = dynamic_cast<TH1*>(object)) histogram->GetXaxis()->SetRangeUser(low, high);
+    }
+    pad->Modified();
+  };
+  apply(canvas);
+  for(const auto& session : fImpl->sessions)
+    if(!session->IsClosed() && session->Canvas() == canvas && session->ValidateTarget()) session->RefreshView();
+  canvas->Modified();
+  canvas->Update();
 }

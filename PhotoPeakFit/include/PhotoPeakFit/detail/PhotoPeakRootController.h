@@ -6,6 +6,7 @@
 #include <GuiTypes.h>
 
 class TH1;
+class TCanvas;
 class PhotoPeakSession;
 class TVirtualPad;
 
@@ -18,6 +19,7 @@ public:
   void ParkEditor(PhotoPeakSession* session);
   bool SelectLayer(int index);
   bool CopyPrevious();
+  void ApplyCanvasRange(TCanvas* canvas, double low, double high);
   bool Clean(TVirtualPad* pad);
   bool RefreshSnapshot(TH1* target, const TH1* snapshot, TVirtualPad* pad);
   bool InvalidateSource(TVirtualPad* pad, const char* message);

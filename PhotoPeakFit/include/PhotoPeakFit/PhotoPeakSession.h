@@ -9,7 +9,6 @@ class PhotoPeakControlWindow;
 class PhotoPeakDrawController;
 class PhotoPeakMarkerController;
 class TCanvas;
-class TObject;
 class TH1;
 class TVirtualPad;
 
@@ -21,8 +20,6 @@ class PhotoPeakSession {
     std::unique_ptr<PhotoPeakControlWindow> TakeWindow();
     void AdoptWindow(std::unique_ptr<PhotoPeakControlWindow> window);
     bool CopySettings(const PhotoPeakSession& source);
-    bool UndoCopy();
-    bool CanUndoCopy() const { return static_cast<bool>(fCopyUndo); }
     bool HandleEvent(const PhotoPeakInputEvent& event);
     void Abandon();
     void ExitMode();
@@ -67,8 +64,6 @@ class PhotoPeakSession {
     TH1* fHistogram;
     std::unique_ptr<TH1> fOriginalHistogram;
     PhotoPeakSessionState fState;
-    std::unique_ptr<PhotoPeakSessionState> fCopyUndo;
-    std::vector<std::unique_ptr<TObject>> fUndoObjects;
     std::unique_ptr<PhotoPeakControlWindow> fWindow;
     std::unique_ptr<PhotoPeakMarkerController> fMarkers;
     std::unique_ptr<PhotoPeakDrawController> fDrawing;

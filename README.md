@@ -77,12 +77,12 @@ remain available.
 **Overwrite from previous target** copies the previous target's complete fitting
 configuration and editor draft onto the selected layer, replacing its prior
 PhotoPeakFit settings and clearing its fit results. The source, histogram data,
-other layers, and native drawings remain unchanged. The source is named above the
-button. **Undo overwrite** restores that layer's previous state and fit drawings.
+other layers' fit settings, and native drawings remain unchanged. The source is named above the
+button. The source X zoom, Y display limits, and pad log-axis settings are also
+copied. Overwrite is immediate and has no undo button.
 Copied settings outside the target's range remain visible and must be corrected
 before fitting; they are never silently clipped. Overwrite does not run a fit.
-New layers start from default settings and their own visible range. Rebinning,
-source-snapshot refresh, and Clean discard the pending overwrite undo. State is
+New layers start from default settings and their own visible range. State is
 kept for the live ROOT session; it is not saved across ROOT restarts. A histogram
 cannot simultaneously own fitting sessions in different pads. Failed API calls
 return `false`; `PhotoPeakFit::LastError()` explains the failure.
@@ -130,7 +130,7 @@ preserving ROOT interaction.
 | Left click in the active plot | Add a peak, or select an existing nearby peak |
 | Drag a peak marker | Move its centroid; clicking it again does not delete it |
 | Shift-left click | Set successive fit-range bounds |
-| Shift+E over the canvas | Open ROOT's native X-axis SetRangeUser dialog for this target |
+| Shift+E over the canvas | Open the native X-axis range dialog; OK/Apply synchronizes all histograms and nested pads in this canvas; Cancel leaves them unchanged |
 | Drag a range line | Move that bound; crossing the other bound keeps the dragged line under the pointer |
 | Delete selected / canvas Del | Delete the selected peak |
 | Escape over the canvas | Cancel the gesture and enter Browse |
