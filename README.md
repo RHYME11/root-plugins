@@ -263,6 +263,9 @@ or overlaid; the estimated one-dimensional background curve is shown on the
 total projection when the selected method supplies one. Separate results are
 available through the `Shown result` selector. The `Report` tab describes the
 last successful numerical snapshot, including normalization and uncertainties.
+Both plots show an event status bar by default. Moving the pointer updates its
+physical X/Y coordinates and ROOT object information below that plot, so the X
+readout can be used to estimate a peak position.
 
 In `Pick range` mode, click two edges on the total projection to edit the selected
 gate; with no selection this creates a signal gate. Double-click to move its

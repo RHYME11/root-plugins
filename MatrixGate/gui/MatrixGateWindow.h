@@ -36,6 +36,7 @@ public:
   bool Dirty() const;
   TCanvas* TotalCanvas() const;
   TCanvas* ResultCanvas() const;
+  void UpdateEventStatus(TCanvas* canvas, int event, int px, int py, TObject* selected);
   void ForgetGate(Axis axis, bool background, std::uint64_t id);
   void CollectRows(bool all = false);
   void RefreshActive();

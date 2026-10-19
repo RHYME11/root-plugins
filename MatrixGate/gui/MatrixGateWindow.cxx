@@ -12,6 +12,7 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <Buttons.h>
 #include <TGButton.h>
 #include <TGComboBox.h>
 #include <TGDoubleSlider.h>
@@ -21,6 +22,7 @@
 #include <TSystem.h>
 #include <TROOT.h>
 #include <TGTab.h>
+#include <TGStatusBar.h>
 #include <TGTextEntry.h>
 #include <TGClient.h>
 #include <TH2.h>
@@ -92,6 +94,7 @@ public:
   Session* session = nullptr;
   TRootEmbeddedCanvas* total = nullptr;
   TRootEmbeddedCanvas* result = nullptr;
+  std::array<TGStatusBar*, 2> eventStatus{};
   struct GateRow {
     TGVerticalFrame* frame = nullptr;
     TGTextButton* select = nullptr;
@@ -217,6 +220,14 @@ Window::Window(Session* session) : TGMainFrame(gClient->GetRoot(), 1320, 870), f
     canvases->AddFrame(frame, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 2, 2, 2, 2));
     auto* embedded = new TRootEmbeddedCanvas(total ? "MatrixGateTotal" : "MatrixGateResult", frame, 634, 376);
     frame->AddFrame(embedded, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 3, 3, 3, 3));
+    auto* status = new TGStatusBar(frame, 634, 22);
+    status->SetName(total ? "MatrixGateTotalStatus" : "MatrixGateResultStatus");
+    int parts[] = {40, 60};
+    status->SetParts(parts, 2);
+    status->Draw3DCorner(false);
+    status->SetText("x=--, y=--", 0);
+    frame->AddFrame(status, new TGLayoutHints(kLHintsExpandX | kLHintsBottom, 3, 3, 0, 3));
+    fImpl->eventStatus[total ? 0 : 1] = status;
     return embedded;
   };
   fImpl->total = plot(true); fImpl->result = plot(false);
@@ -347,6 +358,20 @@ TCanvas* Window::TotalCanvas() const { return fImpl->total->GetCanvas(); }
 // ============== ResultCanvas ==============
 // Purpose: Locate the embedded output canvas. Inputs: None. Outputs: Borrowed canvas.
 TCanvas* Window::ResultCanvas() const { return fImpl->result->GetCanvas(); }
+
+// ============== UpdateEventStatus ==============
+// Purpose: Show pointer coordinates and ROOT object info without changing plot focus.
+// Inputs: Canvas event, pixel position, and picked object. Outputs: Updated plot-local status bar.
+void Window::UpdateEventStatus(TCanvas* canvas, int event, int px, int py, TObject* selected) {
+  if(!fImpl->session || (canvas != TotalCanvas() && canvas != ResultCanvas())) return;
+  if(event != kMouseMotion && event != kButton1Motion && event != kButton2Motion &&
+    event != kButton3Motion && event != kButton1ShiftMotion) return;
+  auto* status = fImpl->eventStatus[canvas == TotalCanvas() ? 0 : 1];
+  TVirtualPad::TContext context(canvas->GetSelectedPad() ? canvas->GetSelectedPad() : canvas);
+  status->SetText(TString::Format("x=%.6g, y=%.6g", gPad->PadtoX(gPad->AbsPixeltoX(px)),
+    gPad->PadtoY(gPad->AbsPixeltoY(py))), 0);
+  status->SetText(selected ? selected->GetObjectInfo(px, py) : "", 1);
+}
 
 // ============== Submit ==============
 // Purpose: Commit all fields through one validation path without losing invalid drafts.

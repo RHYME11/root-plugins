@@ -867,6 +867,7 @@ void Session::Preview() {
 // Inputs: Canvas-local event and selected object. Outputs: Stable gate edits or Browse behavior.
 void Session::CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* selected) {
   if(fClosed || (canvas != TotalCanvas() && canvas != ResultCanvas())) return;
+  if(fWindow) fWindow->UpdateEventStatus(canvas, event, px, py, selected);
   if(event == kKeyPress || event == kArrowKeyPress) {
     const int key = py ? py : px;
     if(key == kKey_Left) { Pan(canvas, -1); return; }
