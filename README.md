@@ -154,13 +154,19 @@ The Results page keeps the last fit and its input snapshot separately from the
 initial seeds. Input or binning changes mark that result out of date and remove
 its old fit drawings; selecting a peak or changing the view does not invalidate
 it. Fit failure, unapplied edits, and a current successful result have distinct
-status messages. After a successful fit, the Peaks page retains all peaks and
-uses their fitted centroids, heights, and independent FWHM values as the next
-starting values. Peak identities, selection, Fixed/Limited constraints, and the
+status messages. After a fit returns usable peak estimates, the Peaks page
+retains all peaks and uses their fitted centroids, heights, and physical FWHM
+values as the next starting values. Peak identities, selection, active
+Fixed/Limited constraints, and the
 original fitted-input snapshot are retained. With relative FWHM enabled,
-reference widths stay unchanged and the fitted WSCALE becomes the next starting
-value. Failed fits retain the previous starting values. Adjust the peaks or drag
-either red range line, then choose Fit again; Clean explicitly removes the peaks.
+the updated widths become the new references and WSCALE resets to 1. Its bounds
+are divided by the fitted scale to preserve the same allowed physical widths;
+inactive per-peak width bounds scale with their updated widths. Secondary
+relative-position limits move with their centroids. Nonzero fit status remains
+clearly marked as not converged even when usable estimates are copied for
+refinement. Fits without usable estimates retain the previous starting values.
+Adjust the peaks or drag either red range line, then choose Fit again; Clean
+explicitly removes the peaks.
 The panel repaints the latest result when fitting finishes, without another
 click or tab change. Both the panel and terminal report fitted shared parameters
 and their uncertainties; shape settings retain their user-entered values.

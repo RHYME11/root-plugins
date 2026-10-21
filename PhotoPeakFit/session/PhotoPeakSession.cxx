@@ -40,16 +40,50 @@ void ReleaseSessionFitter(TH1* histogram) {
   delete fitter;
 }
 
-// ============== UpdateFittedSeed ==============
-// Purpose: Reuse a fitted value while preserving explicit parameter constraints.
-// Inputs: Stored control and fitted value. Outputs: Updated free or limited seed.
-void UpdateFittedSeed(PhotoPeakParameterControl& control, double value) {
-  if(control.mode == PhotoPeakParameterMode::Fixed || !std::isfinite(value))
-    return;
-  if(control.mode == PhotoPeakParameterMode::Limited &&
-     (value < control.lower || value > control.upper))
-    return;
-  control.value = value;
+// ============== MakeRefitRequest ==============
+// Purpose: Use physical fitted peak values as the next seeds without changing relative constraints.
+// Inputs: Original request and returned estimates. Outputs: Complete valid controls or no update.
+bool MakeRefitRequest(const PhotoPeakFitRequest& input, const PhotoPeakFitResult& result,
+  PhotoPeakFitRequest& next) {
+  if(result.model.empty() || result.peaks.size() != input.peaks.size() ||
+     result.peaks.empty() || (result.status != 0 && result.ndf <= 0))
+    return false;
+  const double scale = result.relativeFwhm ? result.widthScale : 1.0;
+  if(!std::isfinite(scale) || scale <= 0.0)
+    return false;
+  auto validControl = [](const PhotoPeakParameterControl& control) {
+    return std::isfinite(control.value) && std::isfinite(control.lower) && std::isfinite(control.upper) &&
+      (control.mode != PhotoPeakParameterMode::Limited ||
+       (control.lower < control.upper && control.value >= control.lower && control.value <= control.upper));
+  };
+  next = input;
+  for(std::size_t index = 0; index < next.peaks.size(); ++index) {
+    auto& seed = next.peaks[index];
+    const auto& peak = result.peaks[index];
+    // Secondary positions follow the reference peak; their inactive limits move with it.
+    if(input.config.relativePosition && index > 0) {
+      const double shift = peak.centroid - seed.centroid.value;
+      seed.centroid.lower += shift;
+      seed.centroid.upper += shift;
+    }
+    if(result.relativeFwhm) {
+      seed.fwhm.lower *= scale;
+      seed.fwhm.upper *= scale;
+    }
+    seed.centroid.value = peak.centroid;
+    seed.height.value = peak.height;
+    seed.fwhm.value = peak.fwhm;
+    if(!validControl(seed.centroid) || !validControl(seed.height) || !validControl(seed.fwhm) ||
+       peak.height < 0.0 || peak.fwhm <= 0.0)
+      return false;
+  }
+  if(result.relativeFwhm) {
+    // New reference widths already include the fitted scale; preserve the same physical limits.
+    next.config.widthScale.value = 1.0;
+    next.config.widthScale.lower /= scale;
+    next.config.widthScale.upper /= scale;
+  }
+  return validControl(next.config.widthScale);
 }
 
 } // namespace
@@ -340,7 +374,7 @@ bool PhotoPeakSession::ValidateRequest(const PhotoPeakFitRequest& request) {
 }
 
 // ============== PhotoPeakSession::Fit ==============
-// Purpose: Fit a validated snapshot and reuse successful peak values for refinement.
+// Purpose: Fit a validated snapshot and synchronize usable peak estimates for refinement.
 // Inputs: Committed user settings. Outputs: Result, input snapshot and drawings.
 void PhotoPeakSession::Fit() {
   if(fState.sourceOutOfDate) {
@@ -366,27 +400,21 @@ void PhotoPeakSession::Fit() {
   fState.hasResult = true;
   fState.resultRevision = revision;
   fState.fittedRebinFactor = fState.rebinFactor;
-  if(fState.result.status == 0 && fState.result.peaks.size() == fState.request.peaks.size()) {
-    for(std::size_t index = 0; index < fState.request.peaks.size(); ++index) {
-      auto& seed = fState.request.peaks[index];
-      const auto& peak = fState.result.peaks[index];
-      if(peak.centroid >= snapshot.fitLow && peak.centroid <= snapshot.fitHigh)
-        UpdateFittedSeed(seed.centroid, peak.centroid);
-      if(peak.height >= 0.0)
-        UpdateFittedSeed(seed.height, peak.height);
-      if(!fState.result.relativeFwhm && peak.fwhm > 0.0)
-        UpdateFittedSeed(seed.fwhm, peak.fwhm);
-    }
-    // Shared widths retain their reference values; applying WSCALE twice would rescale them.
-    if(fState.result.relativeFwhm && fState.result.widthScale > 0.0)
-      UpdateFittedSeed(fState.request.config.widthScale, fState.result.widthScale);
+  PhotoPeakFitRequest next;
+  const bool synchronized = MakeRefitRequest(snapshot, fState.result, next);
+  if(synchronized) {
+    fState.request = std::move(next);
     SortPeaks();
     fState.resultRevision = ++fState.revision;
     RefreshMarkers();
   }
   SetStatus(!fState.result.message.empty() ? fState.result.message :
-    fState.result.status == 0 ? "Fit completed. Results match the current input." :
-    "Fit failed or did not converge. Inspect the status and results.");
+    fState.result.status == 0 ? (synchronized ? "Fit completed. Peak values updated for the next fit." :
+      "Fit completed, but peak estimates could not be copied. Previous starting values retained.") :
+    synchronized ? "Fit did not converge. Peak estimates copied for refinement; inspect Results." :
+    "Fit failed or returned unusable estimates. Previous starting values retained.");
+  if(synchronized && fWindow)
+    fWindow->Refresh(true);
 }
 
 // ============== PhotoPeakSession::Changed ==============
