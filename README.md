@@ -171,6 +171,12 @@ parameters. Fixed values, actual parameter limits, derived positions/widths,
 and parameters inactive in the selected model are identified explicitly.
 Long reports remain inside the Results viewport, including on macOS. Scroll
 horizontally or vertically to read the full report; text selection is retained.
+Drag over Results text and use **Copy selection**, **Cmd+C** on macOS, or
+**Ctrl+C** to copy it. **Copy all** copies the complete report, including hidden
+lines; **Cmd+A / Ctrl+A** selects it all. The macOS system clipboard supports
+pasting into Excel and text editors. Refreshing unchanged results preserves
+the selection and scroll position. Copying does not require applying pending
+parameter edits.
 
 Multi-peak plots draw each colored component as the common fitted background plus
 that peak's contribution. All components share the dashed black background,

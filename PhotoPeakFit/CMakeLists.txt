@@ -33,6 +33,9 @@ target_link_libraries(PhotoPeakFit PUBLIC
   ROOT::Core ROOT::RIO ROOT::Hist ROOT::Graf ROOT::Gpad ROOT::Gui
   ROOT::Matrix ROOT::MathCore ROOT::Spectrum
 )
+if(APPLE)
+  target_link_libraries(PhotoPeakFit PRIVATE "-framework ApplicationServices")
+endif()
 set_target_properties(PhotoPeakFit PROPERTIES
   CXX_EXTENSIONS OFF
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"

@@ -58,6 +58,8 @@ enum ControlId {
   kUnzoom,
   kUpdateBackground,
   kDisableBackground,
+  kCopyResultSelected = 130,
+  kCopyResultAll,
   kBackDecreasingWindow = 500,
   kBackIncreasingWindow,
   kBackOrder2,
@@ -202,7 +204,7 @@ public:
   std::array<std::unique_ptr<PhotoPeakParameterRow>, 3> peakRows;
   std::array<std::unique_ptr<PhotoPeakParameterRow>, 7> globals;
   std::array<TGTextButton*, 2> tools{};
-  TGTextView* results = nullptr;
+  PhotoPeakResultView* results = nullptr;
   std::uint64_t editedPeak = 0;
   bool dirty = false;
   bool refreshing = false;
@@ -344,6 +346,12 @@ PhotoPeakControlWindow::PhotoPeakControlWindow(PhotoPeakSession* session)
   fImpl->resultStatus->SetTextJustify(kTextLeft);
   fImpl->resultStatus->SetWrapLength(440);
   results->AddFrame(fImpl->resultStatus, new TGLayoutHints(kLHintsExpandX, 6, 6, 5, 5));
+  auto* resultActions = new TGHorizontalFrame(results);
+  addButton(resultActions, "Copy selection", kCopyResultSelected)->SetToolTipText(
+    "Drag to select report text, then copy it to another application (Cmd+C / Ctrl+C).");
+  addButton(resultActions, "Copy all", kCopyResultAll)->SetToolTipText(
+    "Copy the complete report, including text outside the visible area.");
+  results->AddFrame(resultActions, new TGLayoutHints(kLHintsExpandX, 6, 6, 2, 2));
   fImpl->results = new PhotoPeakResultView(results, 440, 380);
   results->AddFrame(fImpl->results, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 2, 6));
   AddFrame(fImpl->tabs, new TGLayoutHints(kLHintsExpandX | kLHintsExpandY, 6, 6, 4, 4));
@@ -444,6 +452,13 @@ Bool_t PhotoPeakControlWindow::ProcessMessage(Long_t message, Long_t parameter1,
   }
   if(GET_MSG(message) != kC_COMMAND)
     return TGMainFrame::ProcessMessage(message, parameter1, parameter2);
+  if(GET_SUBMSG(message) == kCM_BUTTON &&
+     (parameter1 == kCopyResultSelected || parameter1 == kCopyResultAll)) {
+    const bool copied = parameter1 == kCopyResultAll ? fImpl->results->CopyAll() : fImpl->results->Copy();
+    fImpl->session->SetStatus(copied ? "Results copied. Paste into another application." :
+      "Copy failed. Select report text first, or use Copy all.");
+    return kTRUE;
+  }
   if(fImpl->session->State().fitting)
     return kTRUE;
   if(GET_SUBMSG(message) == kCM_TAB) {
