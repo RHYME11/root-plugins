@@ -756,6 +756,7 @@ PhotoPeakFitResult PhotoPeakFitter::Fit(TH1* hist,
       }
     }
     if(config.relativeFwhm) {
+      trial->SetParameter(widthScaleIndex, config.widthScale.value);
       trial->SetParLimits(widthScaleIndex, config.widthScale.lower,
                          config.widthScale.upper);
       if(config.widthScale.mode == PhotoPeakParameterMode::Fixed)

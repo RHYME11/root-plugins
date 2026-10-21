@@ -202,6 +202,8 @@ bool PhotoPeakRootController::Start(TH1* histogram, TVirtualPad* pad) {
     }
   }
   if(!fImpl->canvases.count(canvas)) {
+    if(!canvas->GetShowEventStatus())
+      canvas->ToggleEventStatus();
     const bool events = canvas->Connect(kCanvasEvent, kController, this,
       "OnEvent(Int_t,Int_t,Int_t,TObject*)");
     const bool closed = canvas->Connect("Closed()", kController, this,

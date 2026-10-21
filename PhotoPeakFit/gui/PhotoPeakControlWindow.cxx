@@ -591,6 +591,8 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
       if(peak.id == state.selectedPeak)
         selected = &peak;
     }
+    fImpl->peakList->MapSubwindows();
+    fImpl->peakList->Layout();
     fImpl->editedPeak = selected ? selected->id : 0;
     if(selected) {
       fImpl->peakList->Select(static_cast<int>(selected->id));

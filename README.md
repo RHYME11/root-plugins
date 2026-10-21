@@ -122,7 +122,9 @@ without constructing another parameter editor for each peak.
 
 The default tool is **Pick peaks**. Shift-click sets the range, and either range
 line can be dragged in this same tool. **Browse** pauses fit picking while
-preserving ROOT interaction.
+preserving ROOT interaction. PhotoPeakFit enables the canvas's native event
+status bar by default, so pointer coordinates are visible while choosing peaks
+and adjusting bounds.
 
 | Interaction | Action |
 |---|---|
@@ -152,10 +154,16 @@ The Results page keeps the last fit and its input snapshot separately from the
 initial seeds. Input or binning changes mark that result out of date and remove
 its old fit drawings; selecting a peak or changing the view does not invalidate
 it. Fit failure, unapplied edits, and a current successful result have distinct
-status messages. Results do not overwrite the initial parameter values.
+status messages. After a successful fit, the Peaks page retains all peaks and
+uses their fitted centroids, heights, and independent FWHM values as the next
+starting values. Peak identities, selection, Fixed/Limited constraints, and the
+original fitted-input snapshot are retained. With relative FWHM enabled,
+reference widths stay unchanged and the fitted WSCALE becomes the next starting
+value. Failed fits retain the previous starting values. Adjust the peaks or drag
+either red range line, then choose Fit again; Clean explicitly removes the peaks.
 The panel repaints the latest result when fitting finishes, without another
 click or tab change. Both the panel and terminal report fitted shared parameters
-and their uncertainties; these are separate from the stored initial settings.
+and their uncertainties; shape settings retain their user-entered values.
 Terminal and Results use the same macro-style report: initial peaks, requested
 mode and ROOT options, effective background settings, relative constraints,
 model/status, chi-square, grouped peak values and areas, and named raw fit

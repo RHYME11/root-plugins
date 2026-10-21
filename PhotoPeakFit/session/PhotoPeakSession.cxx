@@ -40,6 +40,18 @@ void ReleaseSessionFitter(TH1* histogram) {
   delete fitter;
 }
 
+// ============== UpdateFittedSeed ==============
+// Purpose: Reuse a fitted value while preserving explicit parameter constraints.
+// Inputs: Stored control and fitted value. Outputs: Updated free or limited seed.
+void UpdateFittedSeed(PhotoPeakParameterControl& control, double value) {
+  if(control.mode == PhotoPeakParameterMode::Fixed || !std::isfinite(value))
+    return;
+  if(control.mode == PhotoPeakParameterMode::Limited &&
+     (value < control.lower || value > control.upper))
+    return;
+  control.value = value;
+}
+
 } // namespace
 
 // ============== PhotoPeakSession::PhotoPeakSession ==============
@@ -328,7 +340,7 @@ bool PhotoPeakSession::ValidateRequest(const PhotoPeakFitRequest& request) {
 }
 
 // ============== PhotoPeakSession::Fit ==============
-// Purpose: Fit a validated snapshot and retain results without replacing seeds.
+// Purpose: Fit a validated snapshot and reuse successful peak values for refinement.
 // Inputs: Committed user settings. Outputs: Result, input snapshot and drawings.
 void PhotoPeakSession::Fit() {
   if(fState.sourceOutOfDate) {
@@ -354,6 +366,24 @@ void PhotoPeakSession::Fit() {
   fState.hasResult = true;
   fState.resultRevision = revision;
   fState.fittedRebinFactor = fState.rebinFactor;
+  if(fState.result.status == 0 && fState.result.peaks.size() == fState.request.peaks.size()) {
+    for(std::size_t index = 0; index < fState.request.peaks.size(); ++index) {
+      auto& seed = fState.request.peaks[index];
+      const auto& peak = fState.result.peaks[index];
+      if(peak.centroid >= snapshot.fitLow && peak.centroid <= snapshot.fitHigh)
+        UpdateFittedSeed(seed.centroid, peak.centroid);
+      if(peak.height >= 0.0)
+        UpdateFittedSeed(seed.height, peak.height);
+      if(!fState.result.relativeFwhm && peak.fwhm > 0.0)
+        UpdateFittedSeed(seed.fwhm, peak.fwhm);
+    }
+    // Shared widths retain their reference values; applying WSCALE twice would rescale them.
+    if(fState.result.relativeFwhm && fState.result.widthScale > 0.0)
+      UpdateFittedSeed(fState.request.config.widthScale, fState.result.widthScale);
+    SortPeaks();
+    fState.resultRevision = ++fState.revision;
+    RefreshMarkers();
+  }
   SetStatus(!fState.result.message.empty() ? fState.result.message :
     fState.result.status == 0 ? "Fit completed. Results match the current input." :
     "Fit failed or did not converge. Inspect the status and results.");
