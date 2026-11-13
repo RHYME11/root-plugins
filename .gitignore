@@ -1,6 +1,6 @@
 build/
 build-*/
-tests/*
+tests/
 :
 
 *.o
