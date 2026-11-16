@@ -145,6 +145,10 @@ bool PhotoPeakSession::HandleEvent(const PhotoPeakInputEvent& event) {
       case kKey_q: Rebin(true); break;
       case kKey_b: ShowBackground(); break;
       case kKey_o: Unzoom(); break;
+      case kKey_l:
+        fPad->SetLogy(!fPad->GetLogy());
+        fPad->Update();
+        break;
       case kKey_Delete: RemoveSelectedPeak(); break;
       case kKey_Escape: SetInteraction(PhotoPeakInteraction::Browse); break;
       default: break;

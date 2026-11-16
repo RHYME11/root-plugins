@@ -717,8 +717,9 @@ bool Session::SyncResultView(bool force) {
   }
   const double high = maximum > 0 ? maximum * (logY ? 1.5 : 1.15) : 1.0;
   const double low = logY ? (std::isfinite(positive) ? positive * 0.5 : high * 0.01) : (minimum < 0 ? minimum * 1.15 : 0.0);
-  if(!fManualResultY) fAutoResultY = {low, high};
-  const auto limits = fManualResultY ? fManualResultYRange : fAutoResultY;
+  const bool useManualY = fManualResultY && (!logY || fManualResultYRange.first > 0.0);
+  if(!useManualY) fAutoResultY = {low, high};
+  const auto limits = useManualY ? fManualResultYRange : fAutoResultY;
   for(auto& layer : fDisplays) if(layer) { layer->SetMinimum(limits.first); layer->SetMaximum(limits.second); }
   TVirtualPad::TContext context(ResultCanvas());
   ResultCanvas()->Modified(); ResultCanvas()->Update();
@@ -887,6 +888,14 @@ void Session::CanvasEvent(TCanvas* canvas, int event, int px, int py, TObject* s
     if(key == kKey_o) { Unzoom(canvas); return; }
     if(key == kKey_w) { Rebin(canvas, false); return; }
     if(key == kKey_q) { Rebin(canvas, true); return; }
+    if(key == kKey_l) {
+      if(!Display(canvas)) return;
+      TVirtualPad::TContext context(canvas);
+      canvas->SetLogy(!canvas->GetLogy());
+      if(canvas == TotalCanvas()) canvas->Update();
+      else SyncResultView();
+      return;
+    }
     if(canvas != TotalCanvas()) return;
     if(key == kKey_Escape) { SetBrowse(true); return; }
     if(fBrowse) return;

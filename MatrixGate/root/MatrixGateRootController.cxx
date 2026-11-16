@@ -221,13 +221,13 @@ void RootController::OnGuiEvent(Event_t* event, Window_t) {
   char text[8] = {};
   gVirtualX->LookupString(event, text, sizeof(text), key);
   const bool range = key == kKey_E || (key == kKey_e && (event->fState & kKeyShiftMask));
-  const bool viewKey = key == kKey_o || key == kKey_w || key == kKey_q || key == kKey_f;
+  const bool viewKey = key == kKey_o || key == kKey_w || key == kKey_q || key == kKey_f || key == kKey_l;
   if(key != kKey_Left && key != kKey_Right && key != kKey_Escape && !range && !viewKey) return;
   for(const auto& session : fImpl->sessions) if(!session->Closed()) {
     for(auto* canvas : {session->TotalCanvas(), session->ResultCanvas()}) {
       if(canvas && canvas->GetCanvasID() >= 0 &&
         gVirtualX->GetWindowID(canvas->GetCanvasID()) == event->fWindow) {
-        if((viewKey || range) && !canvas->GetSelected()) {
+        if((viewKey || range) && (!canvas->GetSelected() || !canvas->GetSelectedPad())) {
           const int normalized = range ? kKey_E : static_cast<int>(key);
           HandleKey(session.get(), canvas, normalized);
           fImpl->fallbackCanvas = canvas; fImpl->fallbackKey = normalized;

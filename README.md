@@ -44,6 +44,8 @@ MatrixGate::Start(matrix);
 
 The dashed signal and background gate boundaries span the total projection on both linear and logarithmic Y scales.
 
+MatrixGate opens PhotoPeakFit on a separate spectrum snapshot. The snapshot uses the same shortcuts and fit report as a standalone PhotoPeakFit session.
+
 ## Shortcuts
 
 Click the target plot to give it keyboard focus. PhotoPeakFit canvas shortcuts act on the active pad. MatrixGate view shortcuts work on both the total projection and the result plot.
@@ -59,6 +61,7 @@ Click the target plot to give it keyboard focus. PhotoPeakFit canvas shortcuts a
 | `n` | Clear the fit, peak selections, and fit range | |
 | `b` | Recalculate the TSpectrum background | |
 | `w` / `q` | Rebin / undo rebinning | Rebin / undo rebinning |
+| `l` | Toggle linear/logarithmic Y on the active pad in either interaction mode | Toggle linear/logarithmic Y on the focused projection or result plot in either interaction mode |
 | `←` / `→` | Pan the view | Pan the focused plot |
 | `o` | Unzoom the axes | Unzoom the focused plot |
 | `Shift+E` | Open ROOT’s X-axis range dialog and apply the range across the canvas | Open ROOT’s X-axis range dialog for the focused plot |

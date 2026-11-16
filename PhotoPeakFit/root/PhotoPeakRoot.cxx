@@ -136,6 +136,7 @@ public:
   UInt_t arrowKey = 0;
   TCanvas* escapeCanvas = nullptr;
   TCanvas* rangeCanvas = nullptr;
+  TCanvas* logYFallbackCanvas = nullptr;
 };
 
 // ============== PhotoPeakRootController::Instance ==============
@@ -370,6 +371,10 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
   PhotoPeakInputEvent input;
   input.type = event;
   input.code = event == kKeyPress ? (py ? py : px) : static_cast<int>(fImpl->arrowKey);
+  if(event == kKeyPress && input.code == kKey_l && fImpl->logYFallbackCanvas == canvas) {
+    fImpl->logYFallbackCanvas = nullptr;
+    return;
+  }
   if(event == kKeyPress && fImpl->rangeCanvas == canvas &&
      (input.code == kKey_e || input.code == kKey_E)) {
     input.code = kKey_E;
@@ -412,21 +417,22 @@ void PhotoPeakRootController::OnEvent(Int_t event, Int_t px, Int_t py,
 }
 
 // ============== PhotoPeakRootController::OnGuiEvent ==============
-// Purpose: Preserve native arrow identity and normalize Shift+E across ROOT backends.
+// Purpose: Normalize native keys and handle Log Y when ROOT has no selected drawing.
 // Inputs: Native GUI event and optional modal-window identity.
-// Outputs: Key identity cached only for the corresponding canvas container.
-void PhotoPeakRootController::OnGuiEvent(Event_t* event, Window_t) {
+// Outputs: Key identity or one fallback toggle for the owning canvas container.
+void PhotoPeakRootController::OnGuiEvent(Event_t* event, Window_t modal) {
   fImpl->arrowCanvas = nullptr;
   fImpl->arrowKey = 0;
   fImpl->escapeCanvas = nullptr;
   fImpl->rangeCanvas = nullptr;
+  fImpl->logYFallbackCanvas = nullptr;
   if(!event || event->fType != kGKeyPress || !gVirtualX)
     return;
   UInt_t keysym = 0;
   char text[8] = {};
   gVirtualX->LookupString(event, text, sizeof(text), keysym);
   const bool axisRange = keysym == kKey_E || (keysym == kKey_e && (event->fState & kKeyShiftMask));
-  if(keysym != kKey_Left && keysym != kKey_Right && keysym != kKey_Escape && !axisRange)
+  if(keysym != kKey_Left && keysym != kKey_Right && keysym != kKey_Escape && keysym != kKey_l && !axisRange)
     return;
   for(TCanvas* canvas : fImpl->canvases) {
     if(CanvasAlive(canvas) && canvas->GetCanvasID() >= 0 &&
@@ -435,7 +441,13 @@ void PhotoPeakRootController::OnGuiEvent(Event_t* event, Window_t) {
         fImpl->rangeCanvas = canvas;
       else if(keysym == kKey_Escape)
         fImpl->escapeCanvas = canvas;
-      else {
+      else if(keysym == kKey_l) {
+        auto* session = fImpl->active;
+        if(!modal && session && session->Canvas() == canvas && (!canvas->GetSelected() || !canvas->GetSelectedPad())) {
+          fImpl->logYFallbackCanvas = canvas;
+          session->HandleEvent({kKeyPress, kKey_l});
+        }
+      } else {
         fImpl->arrowCanvas = canvas;
         fImpl->arrowKey = keysym;
       }
@@ -450,6 +462,8 @@ void PhotoPeakRootController::OnGuiEvent(Event_t* event, Window_t) {
 // Outputs: Closed sessions without accessing destroyed pad primitives.
 void PhotoPeakRootController::OnCanvasClosed() {
   auto* canvas = static_cast<TCanvas*>(gTQSender);
+  if(fImpl->logYFallbackCanvas == canvas)
+    fImpl->logYFallbackCanvas = nullptr;
   for(const auto& session : fImpl->sessions) {
     if(session->Canvas() == canvas)
       session->DetachTarget();
@@ -513,6 +527,7 @@ void PhotoPeakRootController::Poll() {
     fImpl->arrowCanvas = nullptr;
     fImpl->arrowKey = 0;
     fImpl->rangeCanvas = nullptr;
+    fImpl->logYFallbackCanvas = nullptr;
   }
 }
 

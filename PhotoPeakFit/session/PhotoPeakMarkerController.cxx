@@ -18,9 +18,20 @@ constexpr UInt_t kPhotoPeakMarkerObject = 0x50500001;
 class FitRangeLine : public TLine {
 public:
   // ============== FitRangeLine ==============
-  // Purpose: Identify marker ownership. Inputs: Target and bounds. Outputs: Layer-owned line.
-  FitRangeLine(TH1* target, int bound, double x, double low, double high)
-    : TLine(x, low, x, high), histogram(target), boundary(bound) {}
+  // Purpose: Identify marker ownership. Inputs: Target, boundary and X position. Outputs: Layer-owned line.
+  FitRangeLine(TH1* target, int bound, double x)
+    : TLine(x, 0.0, x, 0.0), histogram(target), boundary(bound) {}
+
+  // ============== Paint ==============
+  // Purpose: Span the current histogram frame on both Y scales.
+  // Inputs: ROOT draw option and current pad. Outputs: Painted range boundary.
+  void Paint(Option_t* option) override {
+    if(!gPad) return;
+    SetY1(gPad->PadtoY(gPad->GetUymin()));
+    SetY2(gPad->PadtoY(gPad->GetUymax()));
+    TLine::Paint(option);
+  }
+
   TH1* histogram;
   int boundary;
 };
@@ -78,13 +89,11 @@ void PhotoPeakMarkerController::Refresh(const PhotoPeakSessionState& state) {
       if(marker->histogram == fHistogram) markers[marker->id] = marker;
     }
   }
-  const double ymin = fPad->PadtoY(fPad->GetUymin());
-  const double ymax = fPad->PadtoY(fPad->GetUymax());
   const double ranges[2] = {state.request.fitLow, state.request.fitHigh};
   for(int bound = 0; bound < 2; ++bound) {
     auto* line = lines[bound];
     if(!line) {
-      line = new FitRangeLine(fHistogram, bound, ranges[bound], ymin, ymax);
+      line = new FitRangeLine(fHistogram, bound, ranges[bound]);
       line->SetUniqueID(kPhotoPeakMarkerObject);
       line->SetLineColor(kRed);
       line->SetLineWidth(2);
@@ -92,8 +101,6 @@ void PhotoPeakMarkerController::Refresh(const PhotoPeakSessionState& state) {
     }
     line->SetX1(ranges[bound]);
     line->SetX2(ranges[bound]);
-    line->SetY1(ymin);
-    line->SetY2(ymax);
   }
   for(const auto& peak : state.request.peaks) {
     auto found = markers.find(peak.id);
