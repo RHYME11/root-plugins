@@ -33,6 +33,23 @@ constexpr UInt_t kGateMarker = 0x4d470001;
 constexpr const char* kEvent = "ProcessedEvent(Int_t,Int_t,Int_t,TObject*)";
 constexpr const char* kReceiver = "MatrixGate::Detail::RootController";
 
+class GateBoundary : public TLine {
+public:
+  // ============== GateBoundary ==============
+  // Purpose: Create a draggable boundary. Inputs: Physical X position. Outputs: Native vertical line.
+  explicit GateBoundary(double x) : TLine(x, 0.0, x, 0.0) { SetVertical(); }
+
+  // ============== Paint ==============
+  // Purpose: Span the histogram frame as painted on either Y scale.
+  // Inputs: ROOT draw option and current pad. Outputs: Painted line with bounds for native picking.
+  void Paint(Option_t* option) override {
+    if(!gPad) return;
+    SetY1(gPad->PadtoY(gPad->GetUymin()));
+    SetY2(gPad->PadtoY(gPad->GetUymax()));
+    TLine::Paint(option);
+  }
+};
+
 // ============== Alive ==============
 // Purpose: Check canvas identity before dereferencing it. Inputs: Borrowed canvas. Outputs: Liveness.
 bool Alive(TCanvas* canvas) {
@@ -744,8 +761,8 @@ void Session::Render(bool resetView) {
     fEstimateDisplay->SetLineColor(kGreen + 2); fEstimateDisplay->SetLineStyle(7); fEstimateDisplay->SetLineWidth(2);
     fEstimateDisplay->Draw("hist same");
   }
-  TotalCanvas()->Modified(); TotalCanvas()->Update();
   DrawMarkers();
+  TotalCanvas()->Modified(); TotalCanvas()->Update();
   ResultCanvas()->cd();
   if(!fResult.projections.empty()) {
     fResultIndex = std::min(fResultIndex, fResult.projections.size() - 1);
@@ -822,9 +839,7 @@ void Session::DrawMarkers() {
         for(const auto& signal : fConfig.gates)
           if(signal.enabled && (signal.low + signal.high) / 2.0 == anchor) { marker.anchorId = signal.id; break; }
       const double x = (edge ? gate.high : gate.low) + anchor;
-      marker.line = std::make_unique<TLine>(x, TotalCanvas()->PadtoY(TotalCanvas()->GetUymin()),
-        x, TotalCanvas()->PadtoY(TotalCanvas()->GetUymax()));
-      marker.line->SetVertical();
+      marker.line = std::make_unique<GateBoundary>(x);
       marker.line->SetUniqueID(kGateMarker);
       marker.line->SetBit(TObject::kMustCleanup);
       marker.line->SetLineColor(GateColor(gate.id));
@@ -836,7 +851,6 @@ void Session::DrawMarkers() {
   };
   for(const auto& gate : fConfig.gates) add(gate, false, 0);
   for(const auto& gate : fConfig.background.gates) for(const double anchor : anchors) add(gate, true, anchor);
-  TotalCanvas()->Modified(); TotalCanvas()->Update();
 }
 
 // ============== Preview ==============
@@ -854,8 +868,6 @@ void Session::Preview() {
     for(const auto& gate : gates) if(gate.id == marker.id) {
       const double x = (marker.upper ? gate.high : gate.low) + marker.anchor;
       marker.line->SetX1(x); marker.line->SetX2(x);
-      marker.line->SetY1(TotalCanvas()->PadtoY(TotalCanvas()->GetUymin()));
-      marker.line->SetY2(TotalCanvas()->PadtoY(TotalCanvas()->GetUymax()));
       marker.line->SetLineWidth(gate.id == fSelectedId && marker.background == fSelectedBackground ? 3 : 2);
     }
   }

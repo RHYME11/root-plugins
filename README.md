@@ -42,6 +42,8 @@ auto* matrix = file->Get<TH2>("matrix");
 MatrixGate::Start(matrix);
 ```
 
+The dashed signal and background gate boundaries span the total projection on both linear and logarithmic Y scales.
+
 ## Shortcuts
 
 Click the target plot to give it keyboard focus. PhotoPeakFit canvas shortcuts act on the active pad. MatrixGate view shortcuts work on both the total projection and the result plot.
