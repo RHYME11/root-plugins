@@ -9,6 +9,7 @@ public:
   PhotoPeakResultView(const TGWindow* parent, UInt_t width, UInt_t height);
   ~PhotoPeakResultView() override;
   Bool_t LoadBuffer(const char* text) override;
+  Bool_t LoadBuffer(const char* text, bool highlightHeading);
   void Clear(Option_t* option = "") override;
   Bool_t Copy() override;
   Bool_t SelectAll() override;
@@ -24,7 +25,9 @@ protected:
   TGDimension fBufferSize;
 
 private:
+  TGGC fHeadingGC;
   std::string fReport;
+  bool fHighlightHeading = false;
   bool fSelecting = false;
 };
 

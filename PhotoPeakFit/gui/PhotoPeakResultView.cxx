@@ -5,6 +5,7 @@
 
 #include <Buttons.h>
 #include <KeySymbols.h>
+#include <TGClient.h>
 #include <TGScrollBar.h>
 #include <TVirtualX.h>
 
@@ -16,7 +17,11 @@
 // Purpose: Keep native text selection and scrolling with bounded rendering.
 // Inputs: Parent and initial size. Outputs: Parent-owned results viewer.
 PhotoPeakResultView::PhotoPeakResultView(const TGWindow* parent, UInt_t width,
-  UInt_t height) : TGTextView(parent, width, height) {}
+  UInt_t height) : TGTextView(parent, width, height), fHeadingGC(fNormGC) {
+  Pixel_t green;
+  if(fClient->GetColorByName("#008000", green))
+    fHeadingGC.SetForeground(green);
+}
 
 // ============== PhotoPeakResultView::~PhotoPeakResultView ==============
 // Purpose: Release the private drawing surface.
@@ -27,18 +32,25 @@ PhotoPeakResultView::~PhotoPeakResultView() {
 }
 
 // ============== PhotoPeakResultView::LoadBuffer ==============
-// Purpose: Keep selection and scrolling when only the surrounding controls refresh.
-// Inputs: Report text. Outputs: Replaced content only when the report changes.
+// Purpose: Load ordinary text. Inputs: Text. Outputs: Unstyled buffer.
 Bool_t PhotoPeakResultView::LoadBuffer(const char* text) {
+  return LoadBuffer(text, false);
+}
+
+// ============== PhotoPeakResultView::LoadBuffer ==============
+// Purpose: Keep selection and scrolling when only the surrounding controls refresh.
+// Inputs: Report text and heading style flag. Outputs: Replaced content only when either changes.
+Bool_t PhotoPeakResultView::LoadBuffer(const char* text, bool highlightHeading) {
   if(!text || !*text) {
     Clear();
     return kTRUE;
   }
-  if(fReport == text)
+  if(fReport == text && fHighlightHeading == highlightHeading)
     return kTRUE;
   if(!TGTextView::LoadBuffer(text))
     return kFALSE;
   fReport = text;
+  fHighlightHeading = highlightHeading;
   SetHsbPosition(0);
   SetVsbPosition(0);
   return kTRUE;
@@ -49,6 +61,7 @@ Bool_t PhotoPeakResultView::LoadBuffer(const char* text) {
 // Inputs: ROOT clear option. Outputs: Empty viewer.
 void PhotoPeakResultView::Clear(Option_t* option) {
   fReport.clear();
+  fHighlightHeading = false;
   TGTextView::Clear(option);
 }
 
@@ -203,6 +216,14 @@ void PhotoPeakResultView::DrawRegion(Int_t, Int_t, UInt_t, UInt_t) {
     }
     const Int_t left = start ? ToScrXCoord(start, row) : -fVisible.fX;
     const Int_t baseline = top + fMaxAscent;
+    const bool heading = fHighlightHeading && row == 0;
+    const auto normalGC = heading ? fHeadingGC() : fNormGC();
+    // Preserve the base font's glyph advances for scrolling and selection hit testing.
+    auto drawText = [&](GContext_t gc, Int_t x, const char* chars, Int_t count) {
+      gVirtualX->DrawString(fBuffer, gc, x, baseline, chars, count);
+      if(heading)
+        gVirtualX->DrawString(fBuffer, gc, x + 1, baseline, chars, count);
+    };
     Long_t markedStart = start;
     Long_t markedEnd = start;
     if(fIsMarked && row >= fMarkedStart.fY && row <= fMarkedEnd.fY) {
@@ -210,7 +231,7 @@ void PhotoPeakResultView::DrawRegion(Int_t, Int_t, UInt_t, UInt_t) {
       markedEnd = row == fMarkedEnd.fY ? std::clamp(fMarkedEnd.fX, start, end) : end;
     }
     if(markedEnd <= markedStart) {
-      gVirtualX->DrawString(fBuffer, fNormGC(), left, baseline, text.get(), length);
+      drawText(normalGC, left, text.get(), length);
       continue;
     }
     const Int_t prefix = markedStart - start;
@@ -218,11 +239,11 @@ void PhotoPeakResultView::DrawRegion(Int_t, Int_t, UInt_t, UInt_t) {
     const Int_t selectionLeft = left + gVirtualX->TextWidth(fFont, text.get(), prefix);
     const Int_t selectionWidth = gVirtualX->TextWidth(fFont, text.get() + prefix, selected);
     if(prefix)
-      gVirtualX->DrawString(fBuffer, fNormGC(), left, baseline, text.get(), prefix);
+      drawText(normalGC, left, text.get(), prefix);
     gVirtualX->FillRectangle(fBuffer, fSelbackGC(), selectionLeft, top, selectionWidth, rowHeight);
-    gVirtualX->DrawString(fBuffer, fSelGC(), selectionLeft, baseline, text.get() + prefix, selected);
+    drawText(fSelGC(), selectionLeft, text.get() + prefix, selected);
     if(prefix + selected < length)
-      gVirtualX->DrawString(fBuffer, fNormGC(), selectionLeft + selectionWidth, baseline,
+      drawText(normalGC, selectionLeft + selectionWidth,
         text.get() + prefix + selected, length - prefix - selected);
   }
   gVirtualX->CopyArea(fBuffer, fCanvas->GetId(), fNormGC(), 0, 0, width, height, 0, 0);

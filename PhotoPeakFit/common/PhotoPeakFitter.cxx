@@ -7,6 +7,12 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <TCanvas.h>
 #include <TF1.h>
 #include <TFitResult.h>
@@ -334,7 +340,18 @@ void CaptureFitParameters(TF1* function, PhotoPeakFitResult& result) {
 // Purpose: Print the same macro-style snapshot shown in the control window.
 // Inputs: Histogram, fitted request and result. Outputs: Flushed terminal report.
 void PrintResult(TH1* hist, const PhotoPeakFitRequest& request, const PhotoPeakFitResult& result) {
-  std::printf("\n%s\n", result.Report(hist->GetName(), request).c_str());
+  const auto report = result.Report(hist->GetTitle(), hist->GetName(), request);
+#ifdef _WIN32
+  const bool terminal = _isatty(_fileno(stdout));
+#else
+  const bool terminal = isatty(fileno(stdout));
+#endif
+  if(terminal) {
+    const auto body = report.find('\n');
+    std::printf("\n\033[1;32m%.*s\033[0m%s\n", static_cast<int>(body), report.c_str(), report.c_str() + body);
+  } else {
+    std::printf("\n%s\n", report.c_str());
+  }
   std::fflush(stdout);
 }
 

@@ -28,6 +28,8 @@ hist->Draw();
 PhotoPeakFit::Start(hist, gPad);
 ```
 
+The fit report opens with **PhotoPeakFit result for "histogram title" (histogram name)**. The heading appears in bold green in **Results** and in the terminal.
+
 ## Start MatrixGate in ROOT
 
 ```bash

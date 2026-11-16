@@ -589,12 +589,13 @@ void PhotoPeakControlWindow::Refresh(bool discardEdits) {
   std::ostringstream output;
   output << std::setprecision(10);
   if(state.hasResult) {
-    output << state.result.Report(fImpl->session->Histogram()->GetName(), state.fittedRequest)
+    const auto* histogram = fImpl->session->Histogram();
+    output << state.result.Report(histogram->GetTitle(), histogram->GetName(), state.fittedRequest)
       << "\nRebin at fit: x" << state.fittedRebinFactor << "\n";
   } else {
     output << "No fit result. Select peaks and choose Fit.\n";
   }
-  fImpl->results->LoadBuffer(output.str().c_str());
+  fImpl->results->LoadBuffer(output.str().c_str(), state.hasResult);
   if(!fImpl->dirty) {
     fImpl->rangeLow->SetNumber(request.fitLow);
     fImpl->rangeHigh->SetNumber(request.fitHigh);

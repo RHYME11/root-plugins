@@ -1,6 +1,7 @@
 #include <PhotoPeakFit/PhotoPeakFitResult.h>
 #include <PhotoPeakFit/PhotoPeakFitRequest.h>
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
@@ -57,16 +58,25 @@ std::string PhotoPeakFitResult::BackgroundReport() const {
 }
 
 // ============== PhotoPeakFitResult::Report ==============
-// Purpose: Share the macro-style fit report between the terminal and Results page.
-// Inputs: Target name and fitted request snapshot. Outputs: Metadata, derived peaks and raw parameters.
+// Purpose: Format reports for callers that only know the target name.
+// Inputs: Target name and fitted request. Outputs: Report with the name used as the title.
 std::string PhotoPeakFitResult::Report(const std::string& histogram, const PhotoPeakFitRequest& request) const {
+  return Report(histogram, histogram, request);
+}
+
+// ============== PhotoPeakFitResult::Report ==============
+// Purpose: Share the fit report between the terminal and Results page.
+// Inputs: Target title, target name and fitted request. Outputs: Heading, derived peaks and raw parameters.
+std::string PhotoPeakFitResult::Report(const std::string& title, const std::string& histogram,
+  const PhotoPeakFitRequest& request) const {
   const bool multiple = request.peaks.size() > 1;
   const bool relativePosition = multiple && request.config.relativePosition;
   const char* mode = request.config.mode == PhotoPeakFitMode::Auto ? "auto" :
     request.config.mode == PhotoPeakFitMode::HighStat ? "highstat" : "lowstat";
+  std::string heading = "PhotoPeakFit result for \"" + title + "\" (" + histogram + ")";
+  std::replace_if(heading.begin(), heading.end(), [](unsigned char c) { return c < ' ' || c == 127; }, ' ');
   std::ostringstream output;
-  output << std::setprecision(10) << (multiple ? "multipeakfit" : "photopeakfit")
-    << " result for " << histogram << "\nFit range: [" << request.fitLow << ", " << request.fitHigh << "]"
+  output << std::setprecision(10) << heading << "\nFit range: [" << request.fitLow << ", " << request.fitHigh << "]"
     << (multiple ? ", initial peaks:" : ", initial peak position:");
   for(const auto& seed : request.peaks)
     output << " " << seed.centroid.value;

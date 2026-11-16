@@ -65,6 +65,8 @@ struct PhotoPeakFitResult {
   std::string GlobalParameterReport() const;
   std::string BackgroundReport() const;
   std::string Report(const std::string& histogram, const PhotoPeakFitRequest& request) const;
+  std::string Report(const std::string& title, const std::string& histogram,
+    const PhotoPeakFitRequest& request) const;
 };
 
 #endif
